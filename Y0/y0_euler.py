@@ -46,7 +46,8 @@ from grudge.shortcuts import make_visualizer
 from mirgecom.euler import inviscid_operator
 from mirgecom.simutil import (
     inviscid_sim_timestep,
-    sim_checkpoint
+    sim_checkpoint,
+    create_parallel_grid
 )
 from mirgecom.io import (
     make_init_message,
@@ -82,7 +83,11 @@ def get_pseudo_y0_mesh():
     before being used with the current main driver in this
     example.
     """
-    from meshmode.mesh.io import read_gmsh, generate_gmsh, ScriptWithFilesSource
+    from meshmode.mesh.io import (
+        read_gmsh,
+        generate_gmsh,
+        ScriptWithFilesSource
+    )
     import os
     if os.path.exists("data/pseudoY0.msh") is False:
         mesh = generate_gmsh(
@@ -173,64 +178,25 @@ def main(ctx_factory=cl.create_some_context):
     timestepper = rk4_step
 
     comm = MPI.COMM_WORLD
-    nproc = comm.Get_size()
     rank = comm.Get_rank()
-    num_parts = nproc
 
-    from meshmode.distributed import (
-        MPIMeshDistributor,
-        get_partition_by_pymetis,
-    )
-
-    global_nelements = 0
-    local_nelements = 0
-
-    if nproc > 1:
-        mesh_dist = MPIMeshDistributor(comm)
-        if mesh_dist.is_mananger_rank():
-
-            mesh = get_pseudo_y0_mesh()
-            global_nelements = mesh.nelements
-            logging.info(f"Total {dim}d elements: {global_nelements}")
-            logging.info(f"Grid BTAGS: {mesh.boundary_tags}")
-            #            print(f"btags = {mesh.boundary_tags}")
-
-            logging.info("Partitioning grid.")
-            part_per_element = get_partition_by_pymetis(mesh, num_parts)
-            logging.info("Sending grid partitions")
-
-            local_mesh = mesh_dist.send_mesh_parts(mesh, part_per_element, num_parts)
-            del mesh
-            logging.info("Grid partitions sent.")
-
-        else:
-            local_mesh = mesh_dist.receive_mesh_part()
-
-        comm.Barrier()
-
-        if rank == 0:
-            logging.info("Grid distributed.")
-    else:
-        logging.info("Reading grid.")
-        local_mesh = get_pseudo_y0_mesh()
-        global_nelements = local_mesh.nelements
-        logging.info("Done. Reading grid.")
+    local_mesh, global_nelements = create_parallel_grid(comm,
+                                                        get_pseudo_y0_mesh)
 
     local_nelements = local_mesh.nelements
 
-    comm.Barrier()
     if rank == 0:
         logging.info("Making discretization")
     discr = EagerDGDiscretization(
         actx, local_mesh, order=order, mpi_communicator=comm
     )
     nodes = thaw(actx, discr.nodes())
-    comm.Barrier()
+
     if rank == 0:
         logging.info("Initializing soln.")
     current_state = bulk_init(0, nodes)
     #    current_state = set_uniform_solution(t=0.0, x_vec=nodes)
-    comm.Barrier()
+
     if rank == 0:
         logging.info("Adding pulse.")
     current_state[1] = current_state[1] + make_pulse(amp=50000.0, w=.002,
@@ -244,9 +210,11 @@ def main(ctx_factory=cl.create_some_context):
     init_message = make_init_message(dim=dim, order=order,
                                      nelements=local_nelements,
                                      global_nelements=global_nelements,
-                                     dt=current_dt, t_final=t_final, nstatus=nstatus,
-                                     nviz=nviz, cfl=current_cfl,
-                                     constant_cfl=constant_cfl, initname=initname,
+                                     dt=current_dt, t_final=t_final,
+                                     nstatus=nstatus, nviz=nviz,
+                                     cfl=current_cfl,
+                                     constant_cfl=constant_cfl,
+                                     initname=initname,
                                      eosname=eosname, casename=casename)
     if rank == 0:
         logger.info(init_message)
@@ -263,18 +231,19 @@ def main(ctx_factory=cl.create_some_context):
         if rank == 0:
             logger.info(f"Checkpoint: {step}.")
         return sim_checkpoint(discr=discr, visualizer=visualizer, eos=eos,
-                              logger=logger, q=state, vizname=casename, step=step,
-                              t=t, dt=dt, nstatus=nstatus, nviz=nviz,
-                              exittol=exittol, constant_cfl=constant_cfl, comm=comm)
+                              logger=logger, q=state, vizname=casename,
+                              step=step, t=t, dt=dt, nstatus=nstatus,
+                              nviz=nviz, exittol=exittol,
+                              constant_cfl=constant_cfl, comm=comm)
 
-    comm.Barrier()
     if rank == 0:
         logging.info("Stepping.")
 
     (current_step, current_t, current_state) = \
-        advance_state(rhs=my_rhs, timestepper=timestepper, checkpoint=my_checkpoint,
-                    get_timestep=get_timestep, state=current_state,
-                    t=current_t, t_final=t_final)
+        advance_state(rhs=my_rhs, timestepper=timestepper,
+                      checkpoint=my_checkpoint,
+                      get_timestep=get_timestep, state=current_state,
+                      t=current_t, t_final=t_final)
 
     if rank == 0:
         logger.info("Checkpointing final state ...")
