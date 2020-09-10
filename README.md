@@ -1,13 +1,5 @@
-# experiments
-Simulation drivers archive
+# Experiments - Simulation Drivers Archive
 
-This repository houses drivers, configurations, and
-experiments that use CEESD codes, including mirgecom.
-
-This repo has the potential to become a large
-parking lot for useless things falling into
-disrepair.  How do we stop it?
-
- * Periodic CI?
- * Nightly tests (under what conditions?)
- * Manifest?  a top-level file of repo contents
+This is the designated repo for production drivers, and other
+center-maintained numerical experiments and utilities that
+use the CEESD-developed simulation constructs including _mirgecom_.
