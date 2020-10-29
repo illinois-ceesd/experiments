@@ -1,0 +1,21 @@
+digraph deps {
+    size=4;
+    mirgecom -> meshmode;
+    grudge -> meshmode;
+    mirgecom -> grudge;
+
+    mirgecom -> loopy;
+    grudge -> loopy;
+    meshmode -> loopy;
+
+    meshmode -> pytato;
+    pytato -> loopy;
+    loopy -> pyopencl;
+
+    meshmode -> modepy;
+
+    pytato -> pymbolic;
+    loopy -> pymbolic;
+    
+    emirge;
+}
