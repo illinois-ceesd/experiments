@@ -417,22 +417,25 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    import os
-    if rank == 0:
-        os.system("rm -rf cylinder_grid.msh cylinder_grid-v2.msh")
-        os.system("gmsh cylinder_grid.geo -2 cylinder_grid.msh")
-        os.system("gmsh cylinder_grid.msh -save -format msh2 -o cylinder_grid-v2.msh")
-    else:
-        os.system("sleep 2s")
-
     restart_step = None
     if restart_filename:
+
         from mirgecom.restart import read_restart_data
         restart_data = read_restart_data(actx, restart_filename)
         volume_to_local_mesh_data = restart_data["volume_to_local_mesh_data"]
         global_nelements = restart_data["global_nelements"]
         assert restart_data["num_ranks"] == num_ranks
+
     else:  # import the grid
+
+        import os
+        if rank == 0:
+            os.system("rm -rf cylinder_grid.msh cylinder_grid-v2.msh")
+            os.system("gmsh cylinder_grid.geo -2 cylinder_grid.msh")
+            os.system("gmsh cylinder_grid.msh -save -format msh2 -o cylinder_grid-v2.msh")
+        else:
+            os.system("sleep 2s")
+
         def get_mesh_data():
             from meshmode.mesh.io import read_gmsh
             mesh, tag_to_elements = read_gmsh(
@@ -634,11 +637,18 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         restart_step = restart_data["step"]
         current_step = restart_step
         current_t = restart_data["t"]
+        if (np.isscalar(current_t) is False):
+            current_t = np.min(actx.to_numpy(current_t[0]))
 
         fluid_cv = restart_data["fluid_cv"]
         fluid_tseed = restart_data["fluid_temperature_seed"]
         solid_cv = restart_data["solid_cv"]
         solid_tseed = restart_data["solid_temperature_seed"]
+
+#        fluid_cv = restart_data["cv"]
+#        fluid_tseed = restart_data["temperature_seed"]
+#        solid_cv = restart_data["wv"]
+#        solid_tseed = restart_data["wall_temperature_seed"]
 
     first_step = force_evaluation(actx, current_step)
 
@@ -796,17 +806,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         if rank == 0:
             print("Writing restart file...")
 
-        cv, tseed, wv, wv_tseed = state
+        fluid_cv, fluid_tseed, solid_cv, solid_tseed = state
         restart_fname = rst_pattern.format(cname=casename, step=step,
                                            rank=rank)
         if restart_fname != restart_filename:
             restart_data = {
                 "volume_to_local_mesh_data": volume_to_local_mesh_data,
-                "cv": cv,
-                "temperature_seed": tseed,
+                "fluid_cv": fluid_cv,
+                "fluid_temperature_seed": fluid_tseed,
+                "solid_cv": solid_cv,
+                "solid_temperature_seed": solid_tseed,
                 "nspecies": nspecies,
-                "wv": wv,
-                "wall_temperature_seed": wv_tseed,
                 "t": t,
                 "step": step,
                 "order": order,
