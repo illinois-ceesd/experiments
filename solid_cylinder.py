@@ -354,10 +354,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
     Reynolds_number = 150.0
-    Mach_number = 0.3
+    Mach_number = 0.003
 
      # default i/o frequencies
-    nviz = 200
+    nviz = 2
     nrestart = 10000
     nhealth = 1
     nstatus = 100
@@ -370,7 +370,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     local_dt = True
     constant_cfl = True
-    current_cfl = 0.1
+    current_cfl = 0.8
     current_dt = 0.0 #dummy if constant_cfl = True
     
     # discretization and model control
@@ -381,7 +381,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     wall_graphite_rho = 1625.0
     wall_graphite_cp = 770.0
     wall_graphite_kappa = 50.0
-    wall_temperature = 900.0
+    wall_temperature = 1673.0
     wall_emissivity = 1.0
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -492,7 +492,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # {{{  Set up initial state using Cantera
 
     # Use Cantera for initialization
-    mechanism_file = "inert"  # FIXME
+    mechanism_file = "uiuc"  # FIXME
 
     from mirgecom.mechanisms import get_mechanism_input
     mech_input = get_mechanism_input(mechanism_file)
@@ -505,7 +505,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     temp_cantera = 300.0
 
     x_fluid = np.zeros(nspecies)
-    x_fluid[cantera_soln.species_index("Ar")] = 1.0  # FIXME
+    x_fluid[cantera_soln.species_index("O2")] = 1.0  # FIXME
 
     pres_cantera = cantera.one_atm
 
@@ -531,7 +531,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # }}}
 
     # FIXME use the MixtureTransport
-    mu = (340*Mach_number)/Reynolds_number
+    mu =5.6e-5 ##(340*Mach_number)/Reynolds_number
     kappa = 1000.0*mu/0.71
     transport_model = SimpleTransport(viscosity=mu,
         thermal_conductivity=kappa, species_diffusivity=0.25*np.ones(nspecies,))
@@ -613,7 +613,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_init = FluidInitializer(nspecies=nspecies, pressure=100000.0,
+    fluid_init = FluidInitializer(nspecies=nspecies, pressure=653.0,
         temperature=300.0, mach=Mach_number, species_mass_fraction=y_fluid)
 
     solid_init = SolidInitializer(wall_temperature)
@@ -708,12 +708,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
    
     wall_boundary = AdiabaticNoslipWallBoundary()
     inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
-    outflow_boundary = PrescribedFluidBoundary(boundary_state_func=_outflow_boundary_state_func) 
-    #outflow_boundary = PressureOutflowBoundary(boundary_pressure=1.0)
+    outflow_boundary = PrescribedFluidBoundary(boundary_state_func=_outflow_boundary_state_func)
+    #outflow_boundary = PressureOutflowBoundary(boundary_pressure=652.5)
 
     fluid_boundaries = {
         dd_vol_fluid.trace("inflow").domain_tag: inflow_boundary,
-        dd_vol_fluid.trace("outflow").domain_tag: outflow_boundary}
+        dd_vol_fluid.trace("outflow").domain_tag: outflow_boundary,
+        dd_vol_fluid.trace("sidewall").domain_tag: wall_boundary}
 
     solid_boundaries = {}
 

@@ -82,6 +82,7 @@ Transfinite Surface{206} Alternate;
 Plane Surface(207) = {-107};
 
 Physical Line("inflow") = {4};
-Physical Line("outflow") = {1,2,3};
+Physical Line("outflow") = {2};
+Physical Line("sidewall")={1,3};
 Physical Surface("fluid") = {201,202,203,204};
 Physical Surface("solid") = {205,206,207};
