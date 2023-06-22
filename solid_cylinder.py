@@ -246,6 +246,33 @@ class WallModel:
 def sponge_func(cv, cv_ref, sigma):
     return sigma*(cv_ref - cv)
 
+class GasSurfaceReactions:
+    r"""Get the source term from heterogenous reaction
+    Start with Park model for O2
+    C(b)+O2->CO+O-1.40 eV
+    """
+    
+    def __init__(self, wall_material):
+        self.material = wall_material
+        
+    def get_hetero_chem_source_terms(self,wall_temp, cv, dv)->DOFArray:
+        mw_c = 12.011
+        mw_o = 15.999
+        mw_o2 = mw_o*2
+        mw_co2 = 44.010
+        mw_co = mw_o+mw_c
+        univ_gas_const = 8314.46261815324
+        n_avo = 6.0221408e+23
+        kb = 1.38064852e-23
+        eps_o2 = (1.43e-3 + 0.01*np.exp(-1450/wall_temp))/(1 + 2e-4* np.exp(13000/wall_temp))
+        f_o2 = 0.25*np.sqrt(8*kb*dv.temperature/(np.pi * mw_co2/n_avo))
+        k_o2 = f_o2*eps_o2
+        dt_W_o2 = -(cv.species_mass/mw_o2)*k_o2*mw_o2
+        dt_W_co = (cv.species_mass/mw_o2)*k_o2*mw_co
+        #Fix energy balance
+        h_f = -32.3e3
+        dt_E = h_f*(cv.species_mass/mw_o2)*k_o2
+        pass
 
 class InitSponge:
 
@@ -354,10 +381,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
     Reynolds_number = 150.0
-    Mach_number = 0.003
+    Mach_number = 0.25
 
      # default i/o frequencies
-    nviz = 2
+    nviz = 200
     nrestart = 10000
     nhealth = 1
     nstatus = 100
@@ -370,7 +397,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     local_dt = True
     constant_cfl = True
-    current_cfl = 0.8
+    current_cfl = 0.1
     current_dt = 0.0 #dummy if constant_cfl = True
     
     # discretization and model control
@@ -381,7 +408,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     wall_graphite_rho = 1625.0
     wall_graphite_cp = 770.0
     wall_graphite_kappa = 50.0
-    wall_temperature = 1673.0
+    wall_temperature = 900.0
     wall_emissivity = 1.0
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -531,7 +558,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # }}}
 
     # FIXME use the MixtureTransport
-    mu =5.6e-5 ##(340*Mach_number)/Reynolds_number
+    mu = (340*Mach_number)/Reynolds_number
     kappa = 1000.0*mu/0.71
     transport_model = SimpleTransport(viscosity=mu,
         thermal_conductivity=kappa, species_diffusivity=0.25*np.ones(nspecies,))
@@ -613,7 +640,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_init = FluidInitializer(nspecies=nspecies, pressure=653.0,
+    fluid_init = FluidInitializer(nspecies=nspecies, pressure=100000.0,
         temperature=300.0, mach=Mach_number, species_mass_fraction=y_fluid)
 
     solid_init = SolidInitializer(wall_temperature)
@@ -709,7 +736,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     wall_boundary = AdiabaticNoslipWallBoundary()
     inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
     outflow_boundary = PrescribedFluidBoundary(boundary_state_func=_outflow_boundary_state_func)
-    #outflow_boundary = PressureOutflowBoundary(boundary_pressure=652.5)
+    #outflow_boundary = PressureOutflowBoundary(boundary_pressure=.0)
 
     fluid_boundaries = {
         dd_vol_fluid.trace("inflow").domain_tag: inflow_boundary,
