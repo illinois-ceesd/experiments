@@ -140,7 +140,7 @@ class FluidInitializer:
 
         radius = actx.np.sqrt(x_vec[0]**2 + x_vec[1]**2)
 
-        temperature = 0.5*(1.0 - actx.np.tanh(1.0/0.01*(radius - 0.55)))*1000.0 + 300.0
+        temperature = 0.5*(1.0 - actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))*1000.0 + 300.0
         pressure = self._pressure + zeros
         y = self._yf + zeros
 
@@ -322,10 +322,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
     Reynolds_number = 150.0
-    Mach_number = 0.25
+    Mach_number = 0.0025
 
      # default i/o frequencies
-    nviz = 200
+    nviz = 1
     nrestart = 10000
     nhealth = 1
     nstatus = 100
@@ -334,7 +334,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 100.0
+    t_final = 0.1
 
     local_dt = True
     constant_cfl = True
@@ -587,13 +587,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     ref_state = get_fluid_state(fluid_cv_ref, fluid_tseed)
 
     # initialize the sponge field
-    sponge_x_thickness = 10.0
-    sponge_y_thickness = 10.0
+    sponge_x_thickness = 0.03
+    sponge_y_thickness = 0.03
 
-    xMaxLoc = +50.0
-    xMinLoc = -25.0
-    yMaxLoc = +25.0
-    yMinLoc = -25.0
+    xMaxLoc = +0.150
+    xMinLoc = -0.0750
+    yMaxLoc = +0.0750
+    yMinLoc = -0.0750
 
     sponge_amp = 100.0 #may need to be modified. Let's see...
 
