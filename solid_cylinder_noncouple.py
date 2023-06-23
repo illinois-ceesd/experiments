@@ -194,13 +194,17 @@ class GasSurfaceReactions:
         n_avo = 6.0221408e+23
         kb = 1.38064852e-23
         #reaction rate terms
+        eps_o = 0.63*actx.np.exp(-1160/wall_temp)
         eps_o2 = (1.43e-3 + 0.01*actx.np.exp(-1450/wall_temp))/(1 + 2e-4* actx.np.exp(13000/wall_temp))
-        f_o2 = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_co2/n_avo))
+        f_o2 = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o2/n_avo))
+        f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
+        k_o = f_o*eps_o
         k_o2 = f_o2*eps_o2
+        
         #reaction source terms, \dot{W}
         sources[o2_index] = -(wall_species[o2_index]/mw_o2)*k_o2*mw_o2
-        sources[co_index] = (wall_species[o2_index]/mw_o2)*k_o2*mw_co
-        sources[o_index] = (wall_species[o2_index]/mw_o2)*k_o2*mw_o
+        sources[co_index] = (wall_species[o2_index]/mw_o2)*k_o2*mw_co + (wall_species[o_index]/mw_o)*k_o*mw_co
+        sources[o_index] = (wall_species[o2_index]/mw_o2)*k_o2*mw_o - (wall_species[o_index]/mw_o)*k_o*mw_o
         #Fix energy balance
         
         zeros = cv.mass*0.0
@@ -325,7 +329,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0.0025
 
      # default i/o frequencies
-    nviz = 1
+    nviz = 50
     nrestart = 10000
     nhealth = 1
     nstatus = 100
@@ -464,8 +468,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     temp_cantera = 300.0
 
     x_fluid = np.zeros(nspecies)
-    x_fluid[cantera_soln.species_index("O2")] = 1.0  # FIXME
-
+    x_fluid[cantera_soln.species_index("O2")] = 0.90  # FIXME
+    x_fluid[cantera_soln.species_index("O")] = 0.10	
     pres_cantera = cantera.one_atm
 
     cantera_soln.TPX = temp_cantera, pres_cantera, x_fluid
@@ -955,7 +959,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "cylinder"
+    casename = "cylinder_2rxns_5O"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
