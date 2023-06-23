@@ -73,7 +73,7 @@ from mirgecom.boundary import (
     IsothermalWallBoundary
 )
 from mirgecom.fluid import make_conserved
-from mirgecom.transport import SimpleTransport
+from mirgecom.transport import SimpleTransport, MixtureAveragedTransport
 from mirgecom.eos import PyrometheusMixture
 from mirgecom.gas_model import GasModel, make_fluid_state
 
@@ -492,12 +492,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     print(f"Pyrometheus mechanism species names {species_names}")
 
     # }}}
-
-    # FIXME use the MixtureTransport
-    mu = (340*Mach_number)/Reynolds_number
-    kappa = 1000.0*mu/0.71
-    transport_model = SimpleTransport(viscosity=mu,
-        thermal_conductivity=kappa, species_diffusivity=0.25*np.ones(nspecies,))
+    
+    transport_model = MixtureAveragedTransport(pyrometheus_mechanism, lewis=np.ones(nspecies,))
 
     gas_model = GasModel(eos=eos, transport=transport_model)
     hetero_chem = GasSurfaceReactions()
