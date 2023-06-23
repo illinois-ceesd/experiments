@@ -455,7 +455,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # {{{  Set up initial state using Cantera
 
     # Use Cantera for initialization
-    mechanism_file = "uiuc_with_O"  # FIXME
+    import os
+    current_path = os.path.abspath(os.getcwd()) + "/"
+    mechanism_file = current_path + "uiuc_with_O"
 
     from mirgecom.mechanisms import get_mechanism_input
     mech_input = get_mechanism_input(mechanism_file)
