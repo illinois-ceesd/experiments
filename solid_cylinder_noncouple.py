@@ -325,11 +325,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
-    Reynolds_number = 150.0
+#    Reynolds_number = 150.0
     Mach_number = 0.0025
 
      # default i/o frequencies
-    nviz = 50
+    nviz = 250
     nrestart = 10000
     nhealth = 1
     nstatus = 100
@@ -340,15 +340,14 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     integrator = "compiled_lsrk45"
     t_final = 0.1
 
-    local_dt = True
+    local_dt = False
     constant_cfl = True
-    current_cfl = 0.1
+    current_cfl = 0.3
     current_dt = 0.0 #dummy if constant_cfl = True
     
     # discretization and model control
-    order = 3
+    order = 2
     use_overintegration = False
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

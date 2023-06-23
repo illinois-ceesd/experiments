@@ -40,12 +40,12 @@ Line(14) = {14, 11};
 
 
 
-Transfinite Line { 6} = 41 Using Progression 1.0;
-Transfinite Line { 8} = 41 Using Progression 1.0;
-Transfinite Line { 9} = 41 Using Progression 1.0;
-Transfinite Line {10} = 41 Using Progression 1.0;
-Transfinite Line { 5} = 7 Using Progression 1.0;
-Transfinite Line { 7} = 7 Using Progression 1.0;
+Transfinite Line { 6} = 26 Using Progression 1.0;
+Transfinite Line { 8} = 26 Using Progression 1.0;
+Transfinite Line { 9} = 26 Using Progression 1.0;
+Transfinite Line {10} = 26 Using Progression 1.0;
+Transfinite Line { 5} = 11 Using Progression 1.0;
+Transfinite Line { 7} = 11 Using Progression 1.0;
 
 
 Line Loop(101) = {1,2,3,4,11,12,13,14};
