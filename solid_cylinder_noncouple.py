@@ -588,15 +588,15 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     ref_state = get_fluid_state(fluid_cv_ref, fluid_tseed)
 
     # initialize the sponge field
-    sponge_x_thickness = 0.03
-    sponge_y_thickness = 0.03
+    sponge_x_thickness = 0.045
+    sponge_y_thickness = 0.045
 
     xMaxLoc = +0.150
     xMinLoc = -0.0750
     yMaxLoc = +0.0750
     yMinLoc = -0.0750
 
-    sponge_amp = 100.0 #may need to be modified. Let's see...
+    sponge_amp = 400.0 #may need to be modified. Let's see...
 
     sponge_init = InitSponge(amplitude=sponge_amp,
         x_min=xMinLoc, x_max=xMaxLoc,
@@ -793,7 +793,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                 dt = make_obj_array([dt_fluid, dt_fluid])
             else:
                 if constant_cfl:
-                    dt = get_sim_timestep(dcoll, fluid_state, t, dt, maximum_cfl,
+                    dt = get_sim_timestep(dcoll, fluid_state, t, dt, current_cfl,
                                           t_final, constant_cfl, local_dt, dd_vol_fluid)
 
             if check_step(step=step, interval=ngarbage):
@@ -888,10 +888,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         t = make_obj_array([t_fluid, t_fluid])
     else:
         if constant_cfl:
-            dt = get_sim_timestep(dcoll, fluid_state, t, maximum_fluid_dt,
-                maximum_cfl, t_final, constant_cfl, local_dt, dd_vol_fluid)
+            t = 1.0*current_t
+            dt = get_sim_timestep(dcoll, fluid_state, t, current_dt,
+                current_cfl, t_final, constant_cfl, local_dt, dd_vol_fluid)
         else:
-            dt = 1.0*maximum_fluid_dt
+            dt = 1.0*current_dt
             t = 1.0*current_t
 
     if rank == 0:
