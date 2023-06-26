@@ -914,7 +914,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     if rank == 0:
         logger.info("Checkpointing final state ...")
 
-    final_cv, tseed, final_wv, wv_tseed = stepper_state
+    final_cv, tseed = stepper_state
 
     final_fluid_state = get_fluid_state(final_cv, tseed)
     
