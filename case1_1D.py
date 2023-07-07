@@ -81,8 +81,7 @@ from pytools.obj_array import make_obj_array
 
 ############################################################################
 
-"Ihme's paper, case #1"
-class case1:
+class Initializer:
 
     def __init__(
             self, *, dim=2, sigma=1.0, nspecies, velocity,
@@ -218,8 +217,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, casename="mixtransp",
     constant_cfl = True
     local_dt = False
 
+    my_mechanism = "inert"
+
     # discretization and model control
-    order = 4
+    order = 3
     fuel = "Ar"
     
     niter = int(t_final/current_dt)
@@ -254,12 +255,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, casename="mixtransp",
     # --- Note: Users may add their own CTI file by dropping it into
     # ---       mirgecom/mechanisms alongside the other CTI files.
 
-    if fuel == "Ar":
-        mechanism_file = "/home/tulio/Desktop/postdoc/MIRGE_cases/check_mixture_transport/bubble_multispecies/inert"
-    if fuel == "C2H4":
-        mechanism_file = "uiuc"
-    elif fuel == "H2":
-        mechanism_file = "sanDiego"
+    import os
+    current_path = os.path.abspath(os.getcwd()) + "/"
+    mechanism_file = current_path + my_mechanism
 
     from mirgecom.mechanisms import get_mechanism_input
     mech_input = get_mechanism_input(mechanism_file)
@@ -311,13 +309,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, casename="mixtransp",
     print(f"(Y) = ({y_burned}")
 
     velocity = np.zeros(shape=(dim,))
-    velocity[0] = 10.0
 
     # use the burned conditions with a lower temperature
-    flow_init = case1(dim=dim, sigma=0.1, nspecies=nspecies,
-                      velocity=velocity,
-                      species_mass_right=y_unburned,
-                      species_mass_left=y_burned)
+    flow_init = Initializer(dim=dim, sigma=0.1, nspecies=nspecies,
+        velocity=velocity, species_mass_right=y_unburned, species_mass_left=y_burned)
 
     char_len = 0.25
     restart_step = None
@@ -461,7 +456,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, casename="mixtransp",
     boundaries = {BoundaryDomainTag("inlet"):
                     PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state),
                   BoundaryDomainTag("outlet"): 
-                    PressureOutflowBoundary()}
+                    PressureOutflowBoundary(boundary_pressure=653.0)}
 
 ####################################################################
 
