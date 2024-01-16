@@ -140,7 +140,7 @@ class FluidInitializer:
 
         radius = actx.np.sqrt(x_vec[0]**2 + x_vec[1]**2)
 
-        temperature = 1700
+        temperature = 1700 + zeros
         pressure = self._pressure + zeros
         y = self._yf + zeros
 
@@ -614,8 +614,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # change them in order to match Nic's chamber.
 
     inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
-    inflow_state = make_fluid_state(cv=fluid_init(x_vec=inflow_nodes, eos=eos),
-            gas_model=gas_model, temperature_seed=inflow_nodes[0]*0.0 + 300.0)
+    inflow_cv = force_evaluation(actx, fluid_init(x_vec=inflow_nodes, eos=eos))
+    inflow_state = make_fluid_state(cv=inflow_cv, gas_model=gas_model, temperature_seed=300.0)
     inflow_state = force_evaluation(actx, inflow_state)
 
     def _inflow_boundary_state_func(**kwargs):
@@ -833,8 +833,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             temperature_seed=fluid_tseed, limiter_func=_limit_fluid_cv,
             limiter_dd=dd_vol_fluid)
 
-        fluid_rhs = ns_operator(dcoll, state=fluid_state, time=t,boundaries=boundaries, gas_model=gas_model,return_gradients=False, quadrature_tag=quadrature_tag)
-       
+        fluid_rhs = ns_operator(dcoll, state=fluid_state, time=t,
+            boundaries=boundaries, gas_model=gas_model, 
+            quadrature_tag=quadrature_tag)       
 
         fluid_source_terms = (
             hetero_chem.get_hetero_chem_source_terms(fluid_nodes, fluid_state.cv, fluid_state.dv, cantera_soln)
