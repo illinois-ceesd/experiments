@@ -305,31 +305,16 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
-    rank = 0
     rank = comm.Get_rank()
     num_ranks = comm.Get_size()
 
-    from mirgecom.simutil import global_reduce as _global_reduce
-    global_reduce = partial(_global_reduce, comm=comm)
+    logmgr = initialize_logmgr(use_logmgr,
+        filename="ablation.sqlite", mode="wo", mpi_comm=comm)
 
-    logmgr = initialize_logmgr(use_logmgr, filename=(f"{casename}.sqlite"),
-                               mode="wo", mpi_comm=comm)
-
-    cl_ctx = ctx_factory()
-
-    if use_profiling:
-        queue = cl.CommandQueue(
-            cl_ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
-    else:
-        queue = cl.CommandQueue(cl_ctx)
-
-    if lazy:
-        actx = actx_class(comm, queue, mpi_base_tag=12000,
-                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
-    else:
-        actx = actx_class(comm, queue,
-                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
-                force_device_scalars=True)
+    from mirgecom.array_context import initialize_actx, actx_class_is_profiling
+    actx = initialize_actx(actx_class, comm)
+    queue = getattr(actx, "queue", None)
+    use_profiling = actx_class_is_profiling(actx_class)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -445,7 +430,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         global_nelements = restart_data["global_nelements"]
         restart_order = int(restart_data["order"])
 
-        assert comm.Get_size() == restart_data["num_parts"]
+        assert comm.Get_size() == restart_data["num_ranks"]
 
 
     from mirgecom.discretization import create_discretization_collection
@@ -511,7 +496,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # }}}
     
-    transport_model = MixtureAveragedTransport(pyrometheus_mechanism)
+    transport_model = MixtureAveragedTransport(pyrometheus_mechanism,
+                                               lewis=np.ones(nspecies,))
 
     gas_model = GasModel(eos=eos, transport=transport_model)
     hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor)
