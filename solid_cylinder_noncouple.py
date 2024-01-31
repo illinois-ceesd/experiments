@@ -362,7 +362,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     
     # discretization and model control
     order = 2
-    use_overintegration = False
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -393,7 +392,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
           print(f"\tcurrent_cfl = {current_cfl}")
         print(f"\torder = {order}")
         print(f"\tTime integration = {integrator}")
-        print(f"\tuse_overintegration = {use_overintegration}")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     mesh_filename="isothermal_cylinder_hole-v2.msh"
@@ -431,24 +429,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     from mirgecom.discretization import create_discretization_collection
     dcoll = create_discretization_collection(actx, local_mesh, order=order)
 
-    if use_overintegration:
-        quadrature_tag = DISCR_TAG_QUAD
-    else:
-        quadrature_tag = DISCR_TAG_BASE
-
-    if rank == 0:
-        logger.info("Done making discretization")
-
     from grudge.dof_desc import DD_VOLUME_ALL
     dd_vol_fluid = DD_VOLUME_ALL
  
-
     fluid_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid))
  
-
     fluid_zeros = force_evaluation(actx, actx.np.zeros_like(fluid_nodes[0]))
     
-
     use_overintegration = False
     if use_overintegration:
         quadrature_tag = DISCR_TAG_QUAD

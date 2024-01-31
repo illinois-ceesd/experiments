@@ -41,13 +41,13 @@ import grudge.op as op
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
 from grudge.dof_desc import (
-    DOFDesc, DISCR_TAG_BASE, DISCR_TAG_QUAD,
-    VolumeDomainTag
+    DOFDesc, DISCR_TAG_BASE, DISCR_TAG_QUAD, DD_VOLUME_ALL, VolumeDomainTag
 )
+import pyopencl.tools as cl_tools
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from mirgecom.discretization import create_discretization_collection
 from mirgecom.utils import force_evaluation
-from mirgecom.navierstokes import ns_operator
+from mirgecom.navierstokes import ns_operator, grad_cv_operator, grad_t_operator
 from mirgecom.simutil import (
     check_step,
     get_sim_timestep,
@@ -62,28 +62,26 @@ from mirgecom.restart import (
 )
 from mirgecom.io import make_init_message
 from mirgecom.mpi import mpi_entry_point
-import pyopencl.tools as cl_tools
-
 from mirgecom.integrators import lsrk54_step
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedFluidBoundary,
-    AdiabaticSlipBoundary,
+    # AdiabaticSlipBoundary,
     PressureOutflowBoundary,
-    IsothermalWallBoundary
+    # IsothermalWallBoundary
 )
 from mirgecom.fluid import make_conserved
-from mirgecom.transport import SimpleTransport, MixtureAveragedTransport
+from mirgecom.transport import MixtureAveragedTransport
 from mirgecom.eos import PyrometheusMixture
-from mirgecom.gas_model import GasModel, make_fluid_state
-
-from logpyle import IntervalTimer, set_dt
+from mirgecom.gas_model import (
+    GasModel, make_fluid_state, make_operator_fluid_states
+)
 from mirgecom.logging_quantities import (
     initialize_logmgr,
     logmgr_add_cl_device_info, logmgr_set_time,
     logmgr_add_device_memory_usage,
 )
-
+from logpyle import IntervalTimer, set_dt
 from pytools.obj_array import make_obj_array
 
 class SingleLevelFilter(logging.Filter):
@@ -110,6 +108,22 @@ class SingleLevelFilter(logging.Filter):
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+class _FluidOpStatesTag:
+    pass
+
+
+class _FluidGradCVTag:
+    pass
+
+
+class _FluidGradTempTag:
+    pass
+
+
+class _FluidOperatorTag:
+    pass
 
 
 class MyRuntimeError(RuntimeError):
@@ -140,7 +154,7 @@ class FluidInitializer:
 
         radius = actx.np.sqrt(x_vec[0]**2 + x_vec[1]**2)
 
-        temperature = 1700 + zeros
+        temperature = self._temperature + zeros
         pressure = self._pressure + zeros
         y = self._yf + zeros
 
@@ -328,7 +342,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0 #0.00025
 
      # default i/o frequencies
-    nviz = 1
+    nviz = 500
     nrestart = 5000
     nhealth = 1
     nstatus = 100
@@ -341,13 +355,15 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     speedup_factor = 1.0
 
     local_dt = False
-    constant_cfl = False
-    current_cfl = 0.3
+    constant_cfl = True
+    current_cfl = 0.4
     current_dt = 1e-9 #dummy if constant_cfl = True
     
     # discretization and model control
     order = 2
     use_overintegration = False
+
+    fluid_temperature = 1700.0
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -381,24 +397,41 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         print(f"\tuse_overintegration = {use_overintegration}")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    mesh_filename="oxi_0D_grid-v2.msh"
     restart_step = None
     if restart_file is None:
-        if rank == 0:
-            print(f"Reading mesh from {mesh_filename}")
+#        mesh_filename="oxi_0D_grid-v2.msh"
+#        if rank == 0:
+#            print(f"Reading mesh from {mesh_filename}")
 
-        def get_mesh_data():
-            from meshmode.mesh.io import read_gmsh
-            mesh, tag_to_elements = read_gmsh(
-                mesh_filename, force_ambient_dim=dim,
-                return_tag_to_elements_map=True)
-            tag_to_elements = None
-            volume_to_tags = None
-            return mesh, tag_to_elements, volume_to_tags
+#        def get_mesh_data():
+#            from meshmode.mesh.io import read_gmsh
+#            mesh, tag_to_elements = read_gmsh(
+#                mesh_filename, force_ambient_dim=dim,
+#                return_tag_to_elements_map=True)
+#            tag_to_elements = None
+#            volume_to_tags = None
+#            return mesh, tag_to_elements, volume_to_tags
 
-        volume_to_local_mesh_data, global_nelements = distribute_mesh(
-            comm, get_mesh_data)
+#        volume_to_local_mesh_data, global_nelements = distribute_mesh(
+#            comm, get_mesh_data)
 
+#        local_mesh = volume_to_local_mesh_data
+#        local_nelements = local_mesh.nelements
+
+        nels_x = 2
+        nels_y = 21
+        nels_axis = (nels_x, nels_y)
+        box_ll = (-0.00015, 0.0)
+        box_ur = (+0.00015, 0.0060)
+        from meshmode.mesh.generation import generate_regular_rect_mesh
+        generate_mesh = partial(
+            generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
+            boundary_tag_to_face={"inflow": ["+y"], "surface": ["-y"]},
+            periodic=(True, False)
+            )
+        from mirgecom.simutil import generate_and_distribute_mesh
+        volume_to_local_mesh_data, global_nelements = generate_and_distribute_mesh(comm,
+                                                                    generate_mesh)
         local_mesh = volume_to_local_mesh_data
         local_nelements = local_mesh.nelements
 
@@ -415,12 +448,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         assert comm.Get_size() == restart_data["num_parts"]
 
 
-
-    from grudge.dof_desc import DISCR_TAG_QUAD
     from mirgecom.discretization import create_discretization_collection
     dcoll = create_discretization_collection(actx, local_mesh, order=order)
 
-    from grudge.dof_desc import DISCR_TAG_BASE, DISCR_TAG_QUAD
     if use_overintegration:
         quadrature_tag = DISCR_TAG_QUAD
     else:
@@ -429,24 +459,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     if rank == 0:
         logger.info("Done making discretization")
 
-    from grudge.dof_desc import DD_VOLUME_ALL
     dd_vol_fluid = DD_VOLUME_ALL
  
-
-    fluid_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid))
- 
-
+    fluid_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid))
     fluid_zeros = force_evaluation(actx, actx.np.zeros_like(fluid_nodes[0]))
-    
-
-    use_overintegration = False
-    if use_overintegration:
-        quadrature_tag = DISCR_TAG_QUAD
-    else:
-        quadrature_tag = DISCR_TAG_BASE
-
-    if rank == 0:
-        logger.info("Done making discretization")
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -467,7 +483,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # Initial temperature, pressure, and mixture mole fractions are needed to
     # set up the initial state in Cantera.
-    temp_cantera = 300.0
+    temp_cantera = fluid_temperature
 
     x_fluid = np.zeros(nspecies)
     #x_fluid[cantera_soln.species_index("O2")] = 0 #0.90  # FIXME
@@ -486,7 +502,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     pyrometheus_mechanism = get_pyrometheus_wrapper_class_from_cantera(
         cantera_soln, temperature_niter=3)(actx.np)
 
-    temperature_seed = 1700.0
+    temperature_seed = fluid_temperature*1.0
     eos = PyrometheusMixture(pyrometheus_mechanism,
                              temperature_guess=temperature_seed)
 
@@ -495,7 +511,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # }}}
     
-    transport_model = MixtureAveragedTransport(pyrometheus_mechanism, lewis=np.ones(nspecies,))
+    transport_model = MixtureAveragedTransport(pyrometheus_mechanism)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
     hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor)
@@ -544,9 +560,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     fluid_init = FluidInitializer(nspecies=nspecies, pressure=30000,
-        temperature=1700.0, mach=Mach_number, species_mass_fraction=y_fluid)
+        temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid)
 
-    
 
     if restart_file is None:
         current_step = 0
@@ -555,8 +570,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             logging.info("Initializing soln.")
 
         fluid_cv = fluid_init(fluid_nodes, eos)
-        fluid_tseed = force_evaluation(actx, temperature_seed + fluid_zeros)
-
+        fluid_tseed = temperature_seed + fluid_zeros
 
     else:
         if rank == 0:
@@ -576,7 +590,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        solid_cv = restart_data["wv"]
 #        solid_tseed = restart_data["wall_temperature_seed"]
 
-    first_step = force_evaluation(actx, current_step)
+    first_step = current_step*1.0
 
     fluid_cv = force_evaluation(actx, fluid_cv)
     fluid_tseed = force_evaluation(actx, fluid_tseed)
@@ -585,49 +599,49 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_cv_ref = force_evaluation(actx, fluid_init(x_vec=fluid_nodes, eos=eos))
-    ref_state = get_fluid_state(fluid_cv_ref, fluid_tseed)
+#    fluid_cv_ref = force_evaluation(actx, fluid_init(x_vec=fluid_nodes, eos=eos))
+#    ref_state = get_fluid_state(fluid_cv_ref, fluid_tseed)
 
-    # initialize the sponge field
-    sponge_x_thickness = 0.030
-    sponge_y_thickness = 0.030
+#    # initialize the sponge field
+#    sponge_x_thickness = 0.030
+#    sponge_y_thickness = 0.030
 
-    xMaxLoc = +0.150
-    xMinLoc = -0.0750
-    yMaxLoc = +0.0750
-    yMinLoc = -0.0750
+#    xMaxLoc = +0.150
+#    xMinLoc = -0.0750
+#    yMaxLoc = +0.0750
+#    yMinLoc = -0.0750
 
-    sponge_amp = 400.0 #may need to be modified. Let's see...
+#    sponge_amp = 400.0 #may need to be modified. Let's see...
 
-    sponge_init = InitSponge(amplitude=sponge_amp,
-        x_min=xMinLoc, x_max=xMaxLoc,
-        y_min=yMinLoc, y_max=yMaxLoc,
-        x_thickness=sponge_x_thickness,
-        y_thickness=sponge_y_thickness
-    )
+#    sponge_init = InitSponge(amplitude=sponge_amp,
+#        x_min=xMinLoc, x_max=xMaxLoc,
+#        y_min=yMinLoc, y_max=yMaxLoc,
+#        x_thickness=sponge_x_thickness,
+#        y_thickness=sponge_y_thickness
+#    )
 
-    sponge_sigma = force_evaluation(actx, sponge_init(x_vec=fluid_nodes))
+#    sponge_sigma = force_evaluation(actx, sponge_init(x_vec=fluid_nodes))
     
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+#    print("Startng inflow...")
 
-    # FIXME this boundary conditions are temporary. It will be necessary to 
-    # change them in order to match Nic's chamber.
+#    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
+#    inflow_state = make_fluid_state(cv=fluid_init(x_vec=inflow_nodes, eos=eos),
+#            gas_model=gas_model, temperature_seed=inflow_nodes[0]*0.0 + fluid_temperature)
+#    inflow_state = force_evaluation(actx, inflow_state)
 
-    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
-    inflow_state = make_fluid_state(cv=fluid_init(x_vec=inflow_nodes, eos=eos),
-            gas_model=gas_model, temperature_seed=inflow_nodes[0]*0.0 + 300.0)
-    inflow_state = force_evaluation(actx, inflow_state)
+#    def _inflow_boundary_state_func(**kwargs):
+#        return inflow_state
 
-    def _inflow_boundary_state_func(**kwargs):
-        return inflow_state
+#    print("Inflow ok...")
 
     """
     """
 
     surface_nodes = force_evaluation(actx,
                                     dcoll.nodes(dd_vol_fluid.trace("surface")))
-    surface_temperature = surface_nodes[0]*0.0 + 1300.0
+    surface_temperature = surface_nodes[0]*0.0 + fluid_temperature
 
     def bnd_temperature_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
         return surface_temperature
@@ -642,7 +656,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         mass = state_minus.cv.mass
 
         normal_momentum = - sum(species_sources)
-        normal = actx.thaw(dcoll.normal(dd_bdry))
+        normal = force_evaluation(actx, dcoll.normal(dd_bdry))
         momentum = normal_momentum * normal
 
         y = state_minus.cv.species_mass_fractions
@@ -654,7 +668,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             energy=energy, species_mass=mass*y)
         return make_fluid_state(cv=surface_cv_cond, gas_model=gas_model,
                                 temperature_seed=temperature)
-
 
     from mirgecom.inviscid import inviscid_flux
     from mirgecom.flux import num_flux_central
@@ -697,7 +710,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                    exterior=state_plus)
 
             actx = state_minus.array_context
-            normal = actx.thaw(dcoll.normal(dd_bdry))
+            normal = force_evaluation(actx, dcoll.normal(dd_bdry))
 
             actx = state_pair.int.array_context
             lam = actx.np.maximum(state_pair.int.wavespeed,
@@ -734,7 +747,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                 grad_cv_minus, grad_t_minus, numerical_flux_func, **kwargs):
             """Return the boundary flux for viscous flux."""
             actx = state_minus.array_context
-            normal = actx.thaw(dcoll.normal(dd_bdry))
+            normal = force_evaluation(actx, dcoll.normal(dd_bdry))
 
             state_plus = self.prescribed_state_for_diffusion(
                 dcoll=dcoll, dd_bdry=dd_bdry, gas_model=gas_model,
@@ -755,17 +768,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                  grad_t=grad_t_plus)
             return f_ext@normal
    
-    wall_boundary = AdiabaticSlipBoundary()
-    inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
+    inflow_boundary = PressureOutflowBoundary(boundary_pressure=30000)
+#    inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
     surface_boundary = MyPrescribedBoundary(bnd_state_func=surface_bnd_state_func,
                                             temperature_func=bnd_temperature_func)
-    #outflow_boundary = PressureOutflowBoundary(boundary_pressure=653)
 
     boundaries = {
         dd_vol_fluid.trace("inflow").domain_tag: inflow_boundary,
         dd_vol_fluid.trace("surface").domain_tag: surface_boundary,
         #dd_vol_fluid.trace("outflow").domain_tag: outflow_boundary,
-        dd_vol_fluid.trace("sidewall").domain_tag: wall_boundary}
+        #dd_vol_fluid.trace("sidewall").domain_tag: wall_boundary
+        }
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -801,8 +814,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         gc_timer = IntervalTimer("t_gc", "Time spent garbage collecting")
         logmgr.add_quantity(gc_timer)
-
-
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -875,21 +886,20 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     def my_health_check(cv, dv):
         health_error = False
-        pressure = actx.thaw(actx.freeze(dv.pressure))
-        temperature = actx.thaw(actx.freeze(dv.temperature))
+        pressure = force_evaluation(actx, dv.pressure)
+        temperature = force_evaluation(actx, dv.temperature)
         
-        if global_reduce(check_naninf_local(dcoll, "vol", pressure), op="lor"):
+        if check_naninf_local(dcoll, "vol", pressure):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
-        if global_reduce(check_naninf_local(dcoll, "vol", temperature), op="lor"):
+        if check_naninf_local(dcoll, "vol", temperature):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in temperature data.")
             
         return health_error 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 
     def _my_get_timestep_fluid(fluid_state, t, dt):
 
@@ -901,7 +911,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             local_dt=local_dt, fluid_dd=dd_vol_fluid)
 
     my_get_timestep_fluid = actx.compile(_my_get_timestep_fluid)
-    
+
     def my_pre_step(step, t, dt, state):
 
         if logmgr:
@@ -911,7 +921,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         fluid_cv = force_evaluation(actx, fluid_cv)
         fluid_tseed = force_evaluation(actx, fluid_tseed)
-        
 
         # construct species-limited fluid state
         fluid_state = get_fluid_state(fluid_cv, fluid_tseed)
@@ -972,17 +981,31 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             temperature_seed=fluid_tseed, limiter_func=_limit_fluid_cv,
             limiter_dd=dd_vol_fluid)
 
-        fluid_rhs = ns_operator(dcoll, state=fluid_state, time=t,
-            boundaries=boundaries, gas_model=gas_model, 
-            quadrature_tag=quadrature_tag)       
+        fluid_operator_states_quad = make_operator_fluid_states(
+            dcoll, fluid_state, gas_model, boundaries,
+            quadrature_tag, dd=dd_vol_fluid, comm_tag=_FluidOpStatesTag,
+            limiter_func=_limit_fluid_cv)
 
-        fluid_source_terms = (
-            hetero_chem.get_hetero_chem_source_terms(fluid_nodes, fluid_state.cv, fluid_state.dv)
-            # + sponge_func(cv=fluid_state.cv, cv_ref=ref_state.cv, sigma=sponge_sigma)
-            # + eos.get_species_source_terms(fluid_state.cv, fluid_state.temperature)
-            # add heterogeneous chemistry in here (this should only exist on the surface)
-        )
-        #print(hetero_chem.get_hetero_chem_source_terms(fluid_nodes, fluid_state.cv, fluid_state.dv, cantera_soln))
+        # fluid grad CV
+        fluid_grad_cv = grad_cv_operator(
+            dcoll, gas_model, boundaries, fluid_state,
+            time=t, quadrature_tag=quadrature_tag, dd=dd_vol_fluid,
+            operator_states_quad=fluid_operator_states_quad,
+            comm_tag=_FluidGradCVTag)
+
+        # fluid grad T
+        fluid_grad_temperature = grad_t_operator(
+            dcoll, gas_model, boundaries, fluid_state,
+            time=t, quadrature_tag=quadrature_tag, dd=dd_vol_fluid,
+            operator_states_quad=fluid_operator_states_quad,
+            comm_tag=_FluidGradTempTag)
+
+        fluid_rhs = ns_operator(
+            dcoll, gas_model, fluid_state, boundaries,
+            time=t, quadrature_tag=quadrature_tag, dd=dd_vol_fluid,
+            operator_states_quad=fluid_operator_states_quad,
+            grad_cv=fluid_grad_cv, grad_t=fluid_grad_temperature,
+            comm_tag=_FluidOperatorTag, inviscid_terms_on=True)   
      
         return make_obj_array([fluid_rhs, fluid_zeros])
 
@@ -1039,9 +1062,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                       pre_step_callback=my_pre_step,
                       post_step_callback=my_post_step,
                       state=stepper_state,
-                      dt=dt, t_final=t_final, t=t,
-                      local_dt=local_dt, max_steps=1e10,
-                      istep=current_step,
+                      dt=dt, t_final=t_final, t=t, istep=current_step,
+                      local_dt=local_dt, max_steps=100000 if local_dt else None,
                       force_eval=force_eval)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
