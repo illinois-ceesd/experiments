@@ -419,10 +419,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        local_nelements = local_mesh.nelements
 
         nels_x = 2
-        nels_y = 21
+        nels_y = 11
         nels_axis = (nels_x, nels_y)
-        box_ll = (-0.00015, 0.0)
-        box_ur = (+0.00015, 0.0060)
+        box_ll = (-0.0003, 0.0)
+        box_ur = (+0.0003, 0.0060)
         from meshmode.mesh.generation import generate_regular_rect_mesh
         generate_mesh = partial(
             generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
@@ -562,7 +562,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_init = FluidInitializer(nspecies=nspecies, pressure=30000,
         temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid)
 
-
     if restart_file is None:
         current_step = 0
         current_t = 0.0
@@ -624,17 +623,35 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-#    print("Startng inflow...")
+    print("Startng inflow...")
 
-#    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
+    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
 #    inflow_state = make_fluid_state(cv=fluid_init(x_vec=inflow_nodes, eos=eos),
 #            gas_model=gas_model, temperature_seed=inflow_nodes[0]*0.0 + fluid_temperature)
 #    inflow_state = force_evaluation(actx, inflow_state)
 
-#    def _inflow_boundary_state_func(**kwargs):
-#        return inflow_state
+    def _inflow_boundary_state_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
+        dummy_cv = fluid_init(x_vec=inflow_nodes, eos=eos)
+        y = dummy_cv.species_mass_fractions
 
-#    print("Inflow ok...")
+        pressure = inflow_nodes[0]*0.0 + 30000.0
+        temperature = state_minus.temperature
+        mass = eos.get_density(pressure, temperature, y)
+        momentum = state_minus.cv.momentum
+        energy = (mass*eos.get_internal_energy(temperature, y)
+                  + 0.5*np.dot(momentum, momentum)/mass)
+        species_mass = mass*y
+        
+        inflow_cv = make_conserved(dim=2, mass=mass, momentum=momentum,
+                                   energy=energy, species_mass=species_mass)
+
+        return make_fluid_state(cv=inflow_cv, gas_model=gas_model,
+                                temperature_seed=temperature)
+
+    def _inflow_boundary_temp_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
+        return inflow_nodes[0]*0.0 + fluid_temperature
+
+    print("Inflow ok...")
 
     """
     """
@@ -768,8 +785,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                  grad_t=grad_t_plus)
             return f_ext@normal
    
-    inflow_boundary = PressureOutflowBoundary(boundary_pressure=30000)
-#    inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
+#    inflow_boundary = PressureOutflowBoundary(boundary_pressure=30000)
+    inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func,
+                                               boundary_temperature_func=_inflow_boundary_temp_func)
     surface_boundary = MyPrescribedBoundary(bnd_state_func=surface_bnd_state_func,
                                             temperature_func=bnd_temperature_func)
 
