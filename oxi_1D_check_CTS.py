@@ -185,17 +185,17 @@ class GasSurfaceReactions:
         sources = wall_species*0
 
         #constants
-        mw_c = 12.011
-        mw_o = 15.999
-        mw_o2 = mw_o*2
-        mw_co2 = 44.010
-        mw_co = mw_o+mw_c
+        mw_c = 16
+        mw_o = 16
+        mw_o2 = 16
+        mw_co2 = 16
+        mw_co = 16
         univ_gas_const = 8314.46261815324
         n_avo = 6.0221408e+23
         kb = 1.38064852e-23
         #reaction rate terms
-        eps_o = 0.63*actx.np.exp(-1160/wall_temp)
-        eps_o2 = (1.43e-3 + 0.01*actx.np.exp(-1450/wall_temp))/(1 + 2e-4* actx.np.exp(13000/wall_temp))
+        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp)
+        eps_o2 = 0.1 #(1.43e-3 + 0.01*actx.np.exp(-1450/wall_temp))/(1 + 2e-4* actx.np.exp(13000/wall_temp))
         f_o2 = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o2/n_avo))
         f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
         k_o = f_o*eps_o
@@ -328,7 +328,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0 #0.00025
 
      # default i/o frequencies
-    nviz = 100
+    nviz = 1
     nrestart = 5000
     nhealth = 1
     nstatus = 100
@@ -337,13 +337,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 10
+    t_final = 1
     speedup_factor = 1.0
 
     local_dt = False
-    constant_cfl = True
+    constant_cfl = False
     current_cfl = 0.3
-    current_dt = 1e-5 #dummy if constant_cfl = True
+    current_dt = 1e-9 #dummy if constant_cfl = True
     
     # discretization and model control
     order = 2
@@ -543,7 +543,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_init = FluidInitializer(nspecies=nspecies, pressure=653,
+    fluid_init = FluidInitializer(nspecies=nspecies, pressure=30000,
         temperature=1700.0, mach=Mach_number, species_mass_fraction=y_fluid)
 
     
@@ -808,7 +808,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     fluid_visualizer = make_visualizer(dcoll, volume_dd=dd_vol_fluid)
 
-    initname = "cylinder"
+    initname = "CatalysisTest"
     eosname = eos.__class__.__name__
     init_message = make_init_message(dim=dim, order=order,
                                      nelements=local_nelements,
@@ -984,7 +984,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         )
         #print(hetero_chem.get_hetero_chem_source_terms(fluid_nodes, fluid_state.cv, fluid_state.dv, cantera_soln))
      
-        return make_obj_array([fluid_rhs + fluid_source_terms, fluid_zeros])
+        return make_obj_array([fluid_rhs, fluid_zeros])
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1093,7 +1093,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "case0Drxns_check"
+    casename = "case1Dcts"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
