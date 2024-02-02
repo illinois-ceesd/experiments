@@ -71,8 +71,8 @@ from mirgecom.boundary import (
     # IsothermalWallBoundary
 )
 from mirgecom.fluid import make_conserved
-from mirgecom.transport import MixtureAveragedTransport
-from mirgecom.eos import PyrometheusMixture
+from mirgecom.transport import MixtureAveragedTransport, SimpleTransport
+from mirgecom.eos import PyrometheusMixture, IdealSingleGas
 from mirgecom.gas_model import (
     GasModel, make_fluid_state, make_operator_fluid_states
 )
@@ -319,7 +319,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     rst_path = "restart_data/"
-    viz_path = "viz_data/"
+    viz_path = "viz_data/simpleGas_finer_mesh/"
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
@@ -327,8 +327,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0 #0.00025
 
      # default i/o frequencies
-    nviz = 500
-    nrestart = 5000
+    nviz = 1000
+    nrestart = 500000
     nhealth = 1
     nstatus = 100
 
@@ -336,7 +336,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 1
+    t_final = 3e-4
     speedup_factor = 1.0
 
     local_dt = False
@@ -348,7 +348,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     order = 2
     use_overintegration = False
 
-    fluid_temperature = 1700.0
+    fluid_temperature = 700.0
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -403,11 +403,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        local_mesh = volume_to_local_mesh_data
 #        local_nelements = local_mesh.nelements
 
-        nels_x = 2
-        nels_y = 11
+        nels_x = 21
+        nels_y = 101
         nels_axis = (nels_x, nels_y)
         box_ll = (-0.0003, 0.0)
-        box_ur = (+0.0003, 0.0060)
+        box_ur = (+0.0003, 0.0030)
         from meshmode.mesh.generation import generate_regular_rect_mesh
         generate_mesh = partial(
             generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
@@ -488,16 +488,15 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         cantera_soln, temperature_niter=3)(actx.np)
 
     temperature_seed = fluid_temperature*1.0
-    eos = PyrometheusMixture(pyrometheus_mechanism,
-                             temperature_guess=temperature_seed)
+    eos = IdealSingleGas(gamma=5/3, gas_const=259.84) # Values for O
 
     species_names = pyrometheus_mechanism.species_names
     print(f"Pyrometheus mechanism species names {species_names}")
 
     # }}}
     
-    transport_model = MixtureAveragedTransport(pyrometheus_mechanism,
-                                               lewis=np.ones(nspecies,))
+    const_d_alph = np.zeros(nspecies) + 0.05
+    transport_model = SimpleTransport(bulk_viscosity=1e-5, viscosity=1e-5, thermal_conductivity=2e-3, species_diffusivity=const_d_alph)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
     hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor)
@@ -736,6 +735,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             for i in range(nspecies):
                 dij = state_minus.tv.species_diffusivity[i]
                 rho_u_y = (state_plus.cv.momentum@normal)*state_minus.species_mass_fractions[i]
+                #print(rho_u_y)
+                #sys.exit()
                 grad_y_bc[i] = - ((rho_u_y - species_sources[i])/(state_minus.cv.mass*dij)) * normal
                 grad_species_mass_bc[i] = (
                     state_minus.mass_density*grad_y_bc[i]
@@ -874,8 +875,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                            rank=rank)
         if restart_fname != restart_filename:
             restart_data = {
-                "volume_to_local_mesh_data": volume_to_local_mesh_data,
-                "local_mesh": volume_to_local_mesh_data,
+                #"volume_to_local_mesh_data": volume_to_local_mesh_data,
+                #"local_mesh": volume_to_local_mesh_data,
                 "fluid_cv": fluid_cv,
                 "fluid_temperature_seed": fluid_tseed,
                 "nspecies": nspecies,
@@ -1119,7 +1120,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "case1Dcts"
+    casename = "case1Dcts_simple_finer"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
