@@ -199,11 +199,11 @@ class GasSurfaceReactions:
         sources = wall_species*0
 
         #constants
-        mw_c = 16
-        mw_o = 16
-        mw_o2 = 16
-        mw_co2 = 16
-        mw_co = 16
+        mw_c = 16/1000
+        mw_o = 16/1000
+        mw_o2 = 16/1000
+        mw_co2 = 16/1000
+        mw_co = 16/1000
         univ_gas_const = 8314.46261815324
         n_avo = 6.0221408e+23
         kb = 1.38064852e-23
@@ -214,13 +214,17 @@ class GasSurfaceReactions:
         f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
         k_o = f_o*eps_o
         k_o2 = f_o2*eps_o2
+     
+   
+        
         
         #reaction source terms, \dot{W}
         sources[self.o2_index] = -(wall_species[self.o2_index]/mw_o2)*k_o2*mw_o2
         sources[self.co_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co + (wall_species[self.o_index]/mw_o)*k_o*mw_co
         sources[self.o_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_o - (wall_species[self.o_index]/mw_o)*k_o*mw_o
         #Fix energy balance
-        
+        #print(sources)
+        #sys.exit()
         zeros = cv.mass*0.0
         species_source = make_obj_array([
             actx.np.where(wall_flag, sources[i]*self.speedup_factor, zeros) for i in range(self.nspecies)
@@ -319,7 +323,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     rst_path = "restart_data/"
-    viz_path = "viz_data/simpleGas_finer_mesh/"
+    viz_path = "viz_data/simpleGas/"
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
@@ -336,7 +340,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 3e-4
+    t_final = 3e-3
     speedup_factor = 1.0
 
     local_dt = False
@@ -404,10 +408,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        local_nelements = local_mesh.nelements
 
         nels_x = 21
-        nels_y = 101
+        nels_y = 51
         nels_axis = (nels_x, nels_y)
         box_ll = (-0.0003, 0.0)
-        box_ur = (+0.0003, 0.0030)
+        box_ur = (+0.0003, 0.0015)
         from meshmode.mesh.generation import generate_regular_rect_mesh
         generate_mesh = partial(
             generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
@@ -477,7 +481,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     cantera_soln.TPX = temp_cantera, pres_cantera, x_fluid
     y_fluid = cantera_soln.Y
-
+    y_fluid2 = y_fluid.copy()
+    y_fluid2[cantera_soln.species_index("O")]=0
+    y_fluid2[cantera_soln.species_index("CO")]=1
     # }}}
 
     # {{{ Create Pyrometheus thermochemistry object & EOS
@@ -495,7 +501,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # }}}
     
-    const_d_alph = np.zeros(nspecies) + 0.05
+    const_d_alph = np.zeros(nspecies) + 5e-3
     transport_model = SimpleTransport(bulk_viscosity=1e-5, viscosity=1e-5, thermal_conductivity=2e-3, species_diffusivity=const_d_alph)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
@@ -546,6 +552,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     fluid_init = FluidInitializer(nspecies=nspecies, pressure=30000,
         temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid)
+    fluid_init2 = FluidInitializer(nspecies=nspecies, pressure=30000,
+        temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid2)
 
     if restart_file is None:
         current_step = 0
@@ -632,18 +640,54 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         return make_fluid_state(cv=inflow_cv, gas_model=gas_model,
                                 temperature_seed=temperature)
-
+                               
     def _inflow_boundary_temp_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
         return inflow_nodes[0]*0.0 + fluid_temperature
+    
+    def _outflow_boundary_state_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
+        dummy_cv = fluid_init2(x_vec=inflow_nodes, eos=eos)
+        y = dummy_cv.species_mass_fractions
+
+        pressure = inflow_nodes[0]*0.0 + 30000.0
+        temperature = state_minus.temperature
+        mass = eos.get_density(pressure, temperature, y)
+        momentum = state_minus.cv.momentum
+        energy = (mass*eos.get_internal_energy(temperature, y)
+                  + 0.5*np.dot(momentum, momentum)/mass)
+        species_mass = mass*y
+        
+        inflow_cv = make_conserved(dim=2, mass=mass, momentum=momentum,
+                                   energy=energy, species_mass=species_mass)
+
+        return make_fluid_state(cv=inflow_cv, gas_model=gas_model,
+                                temperature_seed=temperature)
 
     print("Inflow ok...")
-
+	
     """
     """
 
     surface_nodes = force_evaluation(actx,
                                     dcoll.nodes(dd_vol_fluid.trace("surface")))
     surface_temperature = surface_nodes[0]*0.0 + fluid_temperature
+    
+    def _outflow_boundary_state_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
+        dummy_cv = fluid_init2(x_vec=surface_nodes, eos=eos)
+        y = dummy_cv.species_mass_fractions
+
+        pressure = surface_nodes[0]*0.0 + 30000.0
+        temperature = state_minus.temperature
+        mass = eos.get_density(pressure, temperature, y)
+        momentum = state_minus.cv.momentum
+        energy = (mass*eos.get_internal_energy(temperature, y)
+                  + 0.5*np.dot(momentum, momentum)/mass)
+        species_mass = mass*y
+        
+        outflow_cv = make_conserved(dim=2, mass=mass, momentum=momentum,
+                                   energy=energy, species_mass=species_mass)
+
+        return make_fluid_state(cv=outflow_cv, gas_model=gas_model,
+                                temperature_seed=temperature)
 
     def bnd_temperature_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
         return surface_temperature
@@ -775,8 +819,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #    inflow_boundary = PressureOutflowBoundary(boundary_pressure=30000)
     inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func,
                                                boundary_temperature_func=_inflow_boundary_temp_func)
-    surface_boundary = MyPrescribedBoundary(bnd_state_func=surface_bnd_state_func,
-                                            temperature_func=bnd_temperature_func)
+    surface_boundary = MyPrescribedBoundary(bnd_state_func=surface_bnd_state_func,temperature_func=bnd_temperature_func)
+    #PrescribedFluidBoundary(boundary_state_func=_outflow_boundary_state_func, boundary_temperature_func=_inflow_boundary_temp_func)
+    
 
     boundaries = {
         dd_vol_fluid.trace("inflow").domain_tag: inflow_boundary,
@@ -1120,7 +1165,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "case1Dcts_simple_finer"
+    casename = "case1D"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
