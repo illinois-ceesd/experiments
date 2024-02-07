@@ -187,6 +187,33 @@ class GasSurfaceReactions:
         self.nspecies = cantera_soln.n_species
         self.speedup_factor = speedup_factor
         
+    def steady_state_solution(self, cv):
+    	actx = cv.mass.array_context
+    	d_alph = 5e-3
+    	l_x = 1.5e-3
+    	rho_c = 1.6e-1
+    	mw_c = 16/1000
+    	mw_o = 16/1000
+    	mw_o2 = 2*mw_o #16/1000
+    	univ_gas_const = 8314.46261815324
+    	n_avo = 6.0221408e+23
+    	kb = 1.38064852e-23
+    	eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
+    	f_o2 = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o2/n_avo))
+    	f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
+    	k_o = f_o*f_o*eps_o
+    	a = 1.0
+    	b = d_alph/(l_x*k_o*rho_c)
+    	c = -1.0*b
+    	Y_o_ss = (-b + actx.np.sqrt(b*b - 4*a*c))/(2*a)
+    	Y_O_ss_arr = 0.0*cv.species_mass_fractions[self.o_index] + 1.0
+    	x_arr = actx.np.linspace(0,0.0015,51)
+    	Y_O_ss_arr = Y_o_ss + x_arr*(1-Y_o_ss)/l_x
+    	
+    	#Y_O2_ss_arr = cv.species_mass_fractions[self.o_index].copy()
+    	#print(Y_O_ss_arr)
+    	return 0  
+    	
     def get_hetero_chem_source_terms(self, nodes, cv, dv):
         actx = cv.mass.array_context
         
@@ -590,7 +617,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_cv = force_evaluation(actx, fluid_cv)
     fluid_tseed = force_evaluation(actx, fluid_tseed)
     fluid_state = get_fluid_state(fluid_cv, fluid_tseed)
-
+    ############################################################
+    
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -908,7 +936,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         fluid_viz_fields.extend(
             ("Y_"+species_names[i], fluid_state.cv.species_mass_fractions[i])
             for i in range(nspecies))
-        """
+       
         fluid_operator_states_quad = make_operator_fluid_states(
             dcoll, fluid_state, gas_model, boundaries,
             quadrature_tag, dd=dd_vol_fluid, comm_tag=_FluidOpStatesTag,
@@ -922,7 +950,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         fluid_viz_fields.extend(
            ("grad_Y_"+species_names[i], grad_Y_viz[i])
             for i in range(nspecies))
-	"""
+	
         
         write_visfile(dcoll, fluid_viz_fields, fluid_visualizer,
             vizname=vizname+"-fluid", step=step, t=t,
