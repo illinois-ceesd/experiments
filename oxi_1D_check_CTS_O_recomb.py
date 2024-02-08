@@ -187,7 +187,7 @@ class GasSurfaceReactions:
         self.nspecies = cantera_soln.n_species
         self.speedup_factor = speedup_factor
         
-    def steady_state_solution(self, cv):
+    def steady_state_solution(self, cv, nodes):
     	actx = cv.mass.array_context
     	d_alph = 5e-3
     	l_x = 1.5e-3
@@ -207,12 +207,13 @@ class GasSurfaceReactions:
     	c = -1.0*b
     	Y_o_ss = (-b + actx.np.sqrt(b*b - 4*a*c))/(2*a)
     	Y_O_ss_arr = 0.0*cv.species_mass_fractions[self.o_index] + 1.0
-    	x_arr = actx.np.linspace(0,0.0015,51)
-    	Y_O_ss_arr = Y_o_ss + x_arr*(1-Y_o_ss)/l_x
+    	x_arr = nodes[1]
+    	Y_O_ss_arr = Y_o_ss + ((1-Y_o_ss)/l_x)*nodes[1]*Y_O_ss_arr
+    	Y_O2_ss_arr = 1.0 - Y_O_ss_arr
     	
     	#Y_O2_ss_arr = cv.species_mass_fractions[self.o_index].copy()
     	#print(Y_O_ss_arr)
-    	return 0  
+    	return Y_O_ss_arr, Y_O2_ss_arr
     	
     def get_hetero_chem_source_terms(self, nodes, cv, dv):
         actx = cv.mass.array_context
@@ -618,7 +619,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_tseed = force_evaluation(actx, fluid_tseed)
     fluid_state = get_fluid_state(fluid_cv, fluid_tseed)
     ############################################################
-    
+    Y_O_ss, Y_O2_ss = hetero_chem.steady_state_solution(fluid_state.cv, fluid_nodes)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -930,13 +931,14 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             ("DV_P", fluid_state.pressure),
             ("DV_T", fluid_state.temperature),
             ("dt", dt[0] if local_dt else None),
+            ("Y_O_ss", Y_O_ss),
+            ("Y_O2_ss", Y_O2_ss),
         ]
 
         # species mass fractions
         fluid_viz_fields.extend(
             ("Y_"+species_names[i], fluid_state.cv.species_mass_fractions[i])
             for i in range(nspecies))
-       
         fluid_operator_states_quad = make_operator_fluid_states(
             dcoll, fluid_state, gas_model, boundaries,
             quadrature_tag, dd=dd_vol_fluid, comm_tag=_FluidOpStatesTag,
