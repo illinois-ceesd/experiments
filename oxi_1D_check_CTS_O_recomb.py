@@ -180,12 +180,13 @@ class GasSurfaceReactions:
     C(b)+O2->CO+O-1.40 eV
     """
     
-    def __init__(self, cantera_soln, speedup_factor):
+    def __init__(self, cantera_soln, speedup_factor, chem_flag):
         self.o2_index = cantera_soln.species_index("O2")
         self.co_index = cantera_soln.species_index("CO")
         self.o_index = cantera_soln.species_index("O")
         self.nspecies = cantera_soln.n_species
         self.speedup_factor = speedup_factor
+        self.chem_flag = chem_flag
         
     def steady_state_solution(self, cv, nodes):
     	actx = cv.mass.array_context
@@ -228,30 +229,38 @@ class GasSurfaceReactions:
         sources = wall_species*0
 
         #constants
-        mw_c = 16/1000
+        mw_c = 12/1000
         mw_o = 16/1000
         mw_o2 = 2*mw_o #16/1000
+        mw_co = mw_o +  mw_c
         univ_gas_const = 8314.46261815324
-        n_avo = 6.0221408e+23
-        kb = 1.38064852e-23
+        n_avo = 6.0221408 #e+23
+        kb = 1.38064852 #e-23
         #reaction rate terms
         eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp)
         eps_o2 = 0.0 #(1.43e-3 + 0.01*actx.np.exp(-1450/wall_temp))/(1 + 2e-4* actx.np.exp(13000/wall_temp))
         f_o2 = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o2/n_avo))
         f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
-        k_o = f_o*f_o*eps_o
-        #print(k_o)
-        #sys.exit()
-        k_o2 = f_o2*eps_o2
+        
+        if self.chem_flag == "catalysis":
+                k_o = f_o*f_o*eps_o
+                sources[self.o_index] =  - k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
+                sources[self.o2_index] = k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
+                sources[self.co_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co + (wall_species[self.o_index]/mw_o)*k_o*mw_co
+        if self.chem_flag == "oxidation":
+                k_o = f_o*eps_o
+                sources[self.co_index] =  (wall_species[self.o_index]/mw_o)*k_o*mw_co
+                sources[self.o_index] =  - (wall_species[self.o_index]/mw_o)*k_o*mw_o
      
    	# wall_species -> rho_Y mass/volume need to convert it to concentrations and back 
         
         
         #reaction source terms, \dot{W}
         #O + O + (s)-> O2 + (s) Surface catalysis of O check
-        sources[self.o_index] =  - k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
-        sources[self.o2_index] = k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
+        #sources[self.o_index] =  - k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
+        #sources[self.o2_index] = k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
         #sources[self.co_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co + (wall_species[self.o_index]/mw_o)*k_o*mw_co
+       
  
         #Fix energy balance
         #print(sources)
@@ -353,8 +362,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    rst_path = "restart_data/"
-    viz_path = "viz_data/simpleGas_O_Recomb/"
+    rst_path = "restart_data/oxidation/"
+    viz_path = "viz_data/oxidation/"
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
@@ -362,8 +371,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0 #0.00025
 
      # default i/o frequencies
-    nviz = 500
-    nrestart = 500000
+    nviz = 100
+    nrestart = 10000
     nhealth = 1
     nstatus = 100
 
@@ -376,7 +385,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     local_dt = False
     constant_cfl = True
-    current_cfl = 0.4
+    current_cfl = 0.2
     current_dt = 1e-9 #dummy if constant_cfl = True
     
     # discretization and model control
@@ -526,7 +535,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     temperature_seed = fluid_temperature*1.0
     eos = IdealSingleGas(gamma=5/3, gas_const=259.84) # Values for O
-
+    #eos = PyrometheusMixture()
     species_names = pyrometheus_mechanism.species_names
     print(f"Pyrometheus mechanism species names {species_names}")
 
@@ -536,7 +545,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     transport_model = SimpleTransport(bulk_viscosity=1e-5, viscosity=1e-5, thermal_conductivity=2e-3, species_diffusivity=const_d_alph)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
-    hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor)
+    chem_type = "oxidation"
+    hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor, chem_type)
     
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -674,25 +684,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                 temperature_seed=temperature)
                                
     def _inflow_boundary_temp_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
-        return inflow_nodes[0]*0.0 + fluid_temperature
+        #return inflow_nodes[0]*0.0 + fluid_temperature
+        return state_minus.temperature
     
-    def _outflow_boundary_state_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
-        dummy_cv = fluid_init2(x_vec=inflow_nodes, eos=eos)
-        y = dummy_cv.species_mass_fractions
-
-        pressure = inflow_nodes[0]*0.0 + 30000.0
-        temperature = state_minus.temperature
-        mass = eos.get_density(pressure, temperature, y)
-        momentum = state_minus.cv.momentum
-        energy = (mass*eos.get_internal_energy(temperature, y)
-                  + 0.5*np.dot(momentum, momentum)/mass)
-        species_mass = mass*y
-        
-        inflow_cv = make_conserved(dim=2, mass=mass, momentum=momentum,
-                                   energy=energy, species_mass=species_mass)
-
-        return make_fluid_state(cv=inflow_cv, gas_model=gas_model,
-                                temperature_seed=temperature)
 
     print("Inflow ok...")
 	
@@ -703,24 +697,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                     dcoll.nodes(dd_vol_fluid.trace("surface")))
     surface_temperature = surface_nodes[0]*0.0 + fluid_temperature
     
-    def _outflow_boundary_state_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
-        dummy_cv = fluid_init2(x_vec=surface_nodes, eos=eos)
-        y = dummy_cv.species_mass_fractions
-
-        pressure = surface_nodes[0]*0.0 + 30000.0
-        temperature = state_minus.temperature
-        mass = eos.get_density(pressure, temperature, y)
-        momentum = state_minus.cv.momentum
-        energy = (mass*eos.get_internal_energy(temperature, y)
-                  + 0.5*np.dot(momentum, momentum)/mass)
-        species_mass = mass*y
-        
-        outflow_cv = make_conserved(dim=2, mass=mass, momentum=momentum,
-                                   energy=energy, species_mass=species_mass)
-
-        return make_fluid_state(cv=outflow_cv, gas_model=gas_model,
-                                temperature_seed=temperature)
-
     def bnd_temperature_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
         return surface_temperature
 
@@ -1212,7 +1188,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "simpleGas_O_Recomb"
+    casename = "simpleGas_CO_prod"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
