@@ -448,11 +448,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        local_mesh = volume_to_local_mesh_data
 #        local_nelements = local_mesh.nelements
 
-        nels_x = 3
-        nels_y = 51
+        nels_x = 21
+        nels_y = 101
         nels_axis = (nels_x, nels_y)
-        box_ll = (0.0, 0.0)
-        box_ur = (+0.0001, 0.0015)
+        box_ll = (-0.00015, 0.0)
+        box_ur = (+0.00015, 0.0015)
         from meshmode.mesh.generation import generate_regular_rect_mesh
         generate_mesh = partial(
             generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
@@ -542,7 +542,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # }}}
     
-    const_d_alph = np.zeros(nspecies) + 5e-3
+    const_d_alph = np.zeros(nspecies) + 1e-3
     transport_model = SimpleTransport(bulk_viscosity=1e-5, viscosity=1e-5, thermal_conductivity=2e-3, species_diffusivity=const_d_alph)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
@@ -1217,7 +1217,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "simpleGas_CO_prod"
+    casename = "simpleGas_CO_prod_mesh2"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
