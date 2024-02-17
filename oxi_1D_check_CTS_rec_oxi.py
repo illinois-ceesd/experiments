@@ -390,7 +390,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     current_dt = 1e-9 #dummy if constant_cfl = True
     
     # discretization and model control
-    order = 1
+    order = 2
     use_overintegration = False
 
     fluid_temperature = 700.0
@@ -448,11 +448,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        local_mesh = volume_to_local_mesh_data
 #        local_nelements = local_mesh.nelements
 
-        nels_x = 21
-        nels_y = 101
+        nels_x = 6
+        nels_y = 51
         nels_axis = (nels_x, nels_y)
-        box_ll = (-0.00015, 0.0)
-        box_ur = (+0.00015, 0.0015)
+        box_ll = (-0.000075, 0.0)
+        box_ur = (+0.000075, 0.0015)
         from meshmode.mesh.generation import generate_regular_rect_mesh
         generate_mesh = partial(
             generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
@@ -734,8 +734,22 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         def prescribed_state_for_advection(
                 self, dcoll, dd_bdry, gas_model, state_minus, **kwargs):
-            return self.bnd_state_func(
-                dcoll, dd_bdry, gas_model, state_minus, **kwargs)
+            state_plus = self.bnd_state_func(dcoll, dd_bdry, gas_model,
+                                             state_minus, **kwargs)
+
+            mom_x = -state_minus.cv.momentum[0]
+            mom_y = 2.0*state_plus.cv.momentum[1] - state_minus.cv.momentum[1]
+            mom_plus = make_obj_array([mom_x, mom_y])
+
+            kin_energy_ref = 0.5*np.dot(state_plus.cv.momentum, state_plus.cv.momentum)/state_plus.cv.mass
+            kin_energy_mod = 0.5*np.dot(mom_plus, mom_plus)/state_plus.cv.mass
+            energy_plus = state_plus.cv.energy - kin_energy_ref + kin_energy_mod
+
+            cv = make_conserved(dim=2, mass=state_plus.cv.mass,
+                                energy=energy_plus, momentum=mom_plus,
+                                species_mass=state_plus.cv.species_mass)
+
+            return make_fluid_state(cv=cv, gas_model=gas_model, temperature_seed=300.0)
 
         def prescribed_state_for_diffusion(
                 self, dcoll, dd_bdry, gas_model, state_minus, **kwargs):
@@ -759,12 +773,16 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             actx = state_pair.int.array_context
             lam = actx.np.maximum(state_pair.int.wavespeed,
                                   state_pair.ext.wavespeed)
-            from mirgecom.flux import num_flux_lfr
-            return num_flux_lfr(
+#            from mirgecom.flux import num_flux_lfr
+#            return num_flux_lfr(
+#                f_minus_normal=inviscid_flux(state_pair.int)@normal,
+#                f_plus_normal=inviscid_flux(state_pair.ext)@normal,
+#                q_minus=state_pair.int.cv,
+#                q_plus=state_pair.ext.cv, lam=lam)
+            from mirgecom.flux import num_flux_central
+            return num_flux_central(
                 f_minus_normal=inviscid_flux(state_pair.int)@normal,
-                f_plus_normal=inviscid_flux(state_pair.ext)@normal,
-                q_minus=state_pair.int.cv,
-                q_plus=state_pair.ext.cv, lam=lam)
+                f_plus_normal=inviscid_flux(state_pair.ext)@normal)
 
         def grad_cv_bc(
                 self, state_plus, state_minus, grad_cv_minus, normal, **kwargs):
@@ -774,13 +792,23 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
             grad_y_bc = 0.*grad_cv_minus.species_mass
             grad_species_mass_bc = 0.*grad_cv_minus.species_mass
+            grad_y_minus = species_mass_fraction_gradient(state_minus.cv, grad_cv_minus)
             for i in range(nspecies):
                 dij = state_minus.tv.species_diffusivity[i]
                 rho_u_y = (state_plus.cv.momentum@normal)*state_minus.species_mass_fractions[i]
-                grad_y_bc[i] = - ((rho_u_y - species_sources[i])/(state_minus.cv.mass*dij)) * normal
+                dYdn_bc = - ((rho_u_y - species_sources[i])/(state_minus.cv.mass*dij)) * normal
+                grad_y_bc[i] = grad_y_minus[i] + 2.0*(dYdn_bc - np.dot(grad_y_minus[i], normal))*normal
                 grad_species_mass_bc[i] = (
                     state_minus.mass_density*grad_y_bc[i]
                     + state_minus.species_mass_fractions[i]*grad_cv_minus.mass)
+
+#                dudn_bc = self.alpha * (self.u_ref - u_minus)/kappa_minus
+#                grad_u_tpair = TracePair(dd_bdry,
+#                    interior=grad_u_minus,
+#                    exterior=(
+#                        grad_u_minus
+#                        + 2 * (dudn_bc - np.dot(grad_u_minus, normal)) * normal))
+
 
             return grad_cv_minus.replace(
                 energy=grad_cv_minus*0.0,  # unused
