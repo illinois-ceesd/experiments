@@ -345,8 +345,8 @@ class InitSponge:
 
 @mpi_entry_point
 def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
-         use_profiling=False, casename=None, lazy=False,
-         restart_filename=None):
+         use_tpe=False, use_profiling=False, casename=None, lazy=False,
+         restart_file=None):
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
@@ -386,7 +386,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     local_dt = False
     constant_cfl = True
-    current_cfl = 0.4
+    current_cfl = 0.2 if use_tpe else 0.4
     current_dt = 1e-9 #dummy if constant_cfl = True
     
     # discretization and model control
@@ -448,6 +448,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        local_mesh = volume_to_local_mesh_data
 #        local_nelements = local_mesh.nelements
 
+        from meshmode.mesh import TensorProductElementGroup
+        grp_cls = TensorProductElementGroup if use_tpe else None
+
         nels_x = 6
         nels_y = 51
         nels_axis = (nels_x, nels_y)
@@ -457,8 +460,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         generate_mesh = partial(
             generate_regular_rect_mesh, a=box_ll, b=box_ur, n=nels_axis,
             boundary_tag_to_face={"inflow": ["+y"], "surface": ["-y"]},
-            periodic=(True, False)
-            )
+            periodic=(True, False),
+            group_cls=grp_cls)
+
         from mirgecom.simutil import generate_and_distribute_mesh
         volume_to_local_mesh_data, global_nelements = generate_and_distribute_mesh(comm,
                                                                     generate_mesh)
@@ -479,7 +483,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 
     from mirgecom.discretization import create_discretization_collection
-    dcoll = create_discretization_collection(actx, local_mesh, order=order)
+    dcoll = create_discretization_collection(actx, local_mesh, order=order,
+                                             tensor_product_elements=use_tpe)
 
     if use_overintegration:
         quadrature_tag = DISCR_TAG_QUAD
@@ -543,7 +548,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # }}}
     
     const_d_alph = np.zeros(nspecies) + 1e-3
-    transport_model = SimpleTransport(bulk_viscosity=1e-5, viscosity=1e-5, thermal_conductivity=2e-3, species_diffusivity=const_d_alph)
+    transport_model = SimpleTransport(bulk_viscosity=0, viscosity=1e-5*10.0, thermal_conductivity=2e-3*10.0, species_diffusivity=const_d_alph)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
     chem_type = "oxidation"
@@ -969,7 +974,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         fluid_cv, fluid_tseed = state
         restart_fname = rst_pattern.format(cname=casename, step=step,
                                            rank=rank)
-        if restart_fname != restart_filename:
+        if restart_fname != restart_file:
             restart_data = {
                 "volume_to_local_mesh_data": volume_to_local_mesh_data,
                 #"local_mesh": volume_to_local_mesh_data,
@@ -1226,12 +1231,14 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--casename",  type=ascii,
                         dest="casename", nargs="?", action="store",
                         help="simulation case name")
-    parser.add_argument("--profile", action="store_true", default=False,
+    parser.add_argument("--profiling", action="store_true", default=False,
         help="enable kernel profiling [OFF]")
     parser.add_argument("--log", action="store_true", default=True,
         help="enable logging profiling [ON]")
     parser.add_argument("--lazy", action="store_true", default=False,
         help="enable lazy evaluation [OFF]")
+    parser.add_argument("--tpe", action="store_true",
+        help="use quadrilateral elements.")
 
     args = parser.parse_args()
 
@@ -1256,9 +1263,9 @@ if __name__ == "__main__":
         print("No user input file, using default values")
 
     print(f"Running {sys.argv[0]}\n")
-    from grudge.array_context import get_reasonable_array_context_class
-    actx_class = get_reasonable_array_context_class(lazy=args.lazy, distributed=True)
+    from mirgecom.array_context import get_reasonable_array_context_class
+    actx_class = get_reasonable_array_context_class(
+        lazy=args.lazy, distributed=True, profiling=args.profiling)
 
-    main(actx_class, use_logmgr=args.log, 
-         use_profiling=args.profile,
-         lazy=args.lazy, casename=casename, restart_filename=restart_file)
+    main(actx_class, use_logmgr=args.log, casename=casename, use_tpe=args.tpe,
+         restart_file=restart_file)
