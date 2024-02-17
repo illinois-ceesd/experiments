@@ -792,23 +792,14 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
             grad_y_bc = 0.*grad_cv_minus.species_mass
             grad_species_mass_bc = 0.*grad_cv_minus.species_mass
-            grad_y_minus = species_mass_fraction_gradient(state_minus.cv, grad_cv_minus)
             for i in range(nspecies):
                 dij = state_minus.tv.species_diffusivity[i]
                 rho_u_y = (state_plus.cv.momentum@normal)*state_minus.species_mass_fractions[i]
-                dYdn_bc = - ((rho_u_y - species_sources[i])/(state_minus.cv.mass*dij)) * normal
-                grad_y_bc[i] = grad_y_minus[i] + 2.0*(dYdn_bc - np.dot(grad_y_minus[i], normal))*normal
+                # prescribe directly the gradient because no numerical fluxed is used
+                grad_y_bc[i] = - ((rho_u_y - species_sources[i])/(state_minus.cv.mass*dij)) * normal
                 grad_species_mass_bc[i] = (
                     state_minus.mass_density*grad_y_bc[i]
                     + state_minus.species_mass_fractions[i]*grad_cv_minus.mass)
-
-#                dudn_bc = self.alpha * (self.u_ref - u_minus)/kappa_minus
-#                grad_u_tpair = TracePair(dd_bdry,
-#                    interior=grad_u_minus,
-#                    exterior=(
-#                        grad_u_minus
-#                        + 2 * (dudn_bc - np.dot(grad_u_minus, normal)) * normal))
-
 
             return grad_cv_minus.replace(
                 energy=grad_cv_minus*0.0,  # unused
