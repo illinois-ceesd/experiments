@@ -191,31 +191,49 @@ class GasSurfaceReactions:
         
     def steady_state_solution(self, cv, nodes):
     	actx = cv.mass.array_context
-    	d_alph = 5e-3
+    	d_alph = 1e-3
     	l_x = 1.5e-3
     	rho_c = 1.6e-1
-    	mw_c = 16/1000
+    	mw_c = 12/1000
     	mw_o = 16/1000
+    	mw_co = mw_o +  mw_c
     	mw_o2 = 2*mw_o #16/1000
     	univ_gas_const = 8314.46261815324
-    	n_avo = 6.0221408e+23
-    	kb = 1.38064852e-23
-    	eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
-    	f_o2 = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o2/n_avo))
-    	f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
-    	k_o = f_o*f_o*eps_o
-    	a = 1.0
-    	b = d_alph/(l_x*k_o*rho_c)
-    	c = -1.0*b
-    	Y_o_ss = (-b + actx.np.sqrt(b*b - 4*a*c))/(2*a)
-    	Y_O_ss_arr = 0.0*cv.species_mass_fractions[self.o_index] + 1.0
+    	n_avo = 6.0221408 #e+23
+    	kb = 1.38064852 #e-23
     	x_arr = nodes[1]
-    	Y_O_ss_arr = Y_o_ss + ((1-Y_o_ss)/l_x)*nodes[1]*Y_O_ss_arr
-    	Y_O2_ss_arr = 1.0 - Y_O_ss_arr
-    	
+    	Y_O_ss_arr = 1.0*x_arr
+    	if self.chem_flag == "catalysis":
+    	        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
+            	f_o2 = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o2/n_avo))
+    	        f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
+    	        k_o = f_o*f_o*eps_o
+    	        a = 1.0
+    	        b = d_alph/(l_x*k_o*rho_c)
+    	        c = -1.0*b
+    	        Y_o_ss = (-b + actx.np.sqrt(b*b - 4*a*c))/(2*a)
+    	        Y_O_ss_arr = 0.0*cv.species_mass_fractions[self.o_index] + 1.0
+    	        Y_O_ss_arr = Y_o_ss + ((1-Y_o_ss)/l_x)*nodes[1]*Y_O_ss_arr
+    	        Y_O2_ss_arr = 1.0 - Y_O_ss_arr
+    	        Y_CO_ss_arr = 0.0*nodes[1]
+    	        return Y_O_ss_arr, Y_CO_ss_arr, Y_O2_ss_arr
+    	if self.chem_flag == "oxidation":
+    	        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
+    	        f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
+    	        k_o = f_o*eps_o
+    	        v_y = 0.3635
+    	        d_alph = 1e-3
+    	        exp_c = v_y*l_x/d_alph
+    	        d_inv = 1 - (1+v_y/k_o)*actx.np.exp(exp_c)
+    	        d = 1/d_inv
+    	        c = -1*d*(1+v_y/k_o)
+    	        Y_O_ss_arr = c*actx.np.exp((v_y/d_alph)*nodes[1]) + d
+    	        Y_CO_ss_arr = 1.0 - Y_O_ss_arr
+    	        Y_O2_ss_arr = 0.0*nodes[1]
+    	        return Y_O_ss_arr, Y_CO_ss_arr, Y_O2_ss_arr
     	#Y_O2_ss_arr = cv.species_mass_fractions[self.o_index].copy()
     	#print(Y_O_ss_arr)
-    	return Y_O_ss_arr, Y_O2_ss_arr
+    	
     	
     def get_hetero_chem_source_terms(self, nodes, cv, dv):
         actx = cv.mass.array_context
@@ -381,7 +399,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 1e-2
+    t_final = 2e-3
     speedup_factor = 1.0
 
     local_dt = False
@@ -635,7 +653,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_tseed = force_evaluation(actx, fluid_tseed)
     fluid_state = get_fluid_state(fluid_cv, fluid_tseed)
     ############################################################
-    Y_O_ss, Y_O2_ss = hetero_chem.steady_state_solution(fluid_state.cv, fluid_nodes)
+    Y_O_ss, Y_CO_ss, Y_O2_ss = hetero_chem.steady_state_solution(fluid_state.cv, fluid_nodes)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -949,6 +967,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             ("DV_T", fluid_state.temperature),
             ("dt", dt[0] if local_dt else None),
             ("Y_O_ss", Y_O_ss),
+            ("Y_CO_ss", Y_CO_ss),
             ("Y_O2_ss", Y_O2_ss),
             #("fluid_rhs", fluid_rhs),
         ]
@@ -1243,7 +1262,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "simpleGas_CO_prod_mesh2"
+    casename = "simpleGas_oxidation_test"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
