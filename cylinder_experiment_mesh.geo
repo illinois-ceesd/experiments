@@ -7,7 +7,7 @@ lcar3 = 0.001;
 
 x=0.1;
 y=0.1;
-r_glass = 5e-3;
+r_glass = 11e-3;
 t_glass = 1e-3;
 l_glass = 9e-2;
 
@@ -21,10 +21,10 @@ Point(8)  = { x, -y, 0.0, lcar2};
 Point(9)  = { x,  y, 0.0, lcar2};
 Point(10) = {-x,  y, 0.0, lcar2};
 
-Point(11) = {-0.009,  0.009, 0.0, lcar1};
-Point(12) = { 0.009,  0.009, 0.0, lcar1};
-Point(13) = { 0.009, -0.03, 0.0, lcar1};
-Point(14) = {-0.009, -0.03, 0.0, lcar1};
+Point(11) = {-0.015,  0.006, 0.0, lcar1};
+Point(12) = { 0.015,  0.006, 0.0, lcar1};
+Point(13) = { 0.015, -0.03, 0.0, lcar1};
+Point(14) = {-0.015, -0.03, 0.0, lcar1};
 
 
 //Glass tube points

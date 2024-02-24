@@ -155,7 +155,7 @@ class FluidInitializer:
         u_y = 340.0 * self._mach
         velocity = make_obj_array([u_x, u_y])
 
-        temperature = 300.0 #0.5*(1.0 - actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))*1000.0 + 300.0
+        temperature =300 #0.5*(1.0 - actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))*1000.0 + 300.0
         pressure = self._pressure + zeros
         y = self._yf + zeros
 
@@ -343,7 +343,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0.0000
 
      # default i/o frequencies
-    nviz = 50
+    nviz = 1
     nrestart = 10000
     nhealth = 1
     nstatus = 100
