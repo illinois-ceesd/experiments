@@ -69,7 +69,8 @@ from mirgecom.boundary import (
     PrescribedFluidBoundary,
     AdiabaticSlipBoundary,
     PressureOutflowBoundary,
-    AdiabaticNoslipWallBoundary
+    AdiabaticNoslipWallBoundary, 
+    LinearizedInflow2DBoundary
 )
 from mirgecom.fluid import make_conserved
 from mirgecom.transport import MixtureAveragedTransport
@@ -155,7 +156,7 @@ class FluidInitializer:
         u_y = 340.0 * self._mach
         velocity = make_obj_array([u_x, u_y])
 
-        temperature =300 #0.5*(1.0 - actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))*1000.0 + 300.0
+        temperature = 300.0 + zeros #0.5*(1.0 - actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))*1000.0 + 300.0
         pressure = self._pressure + zeros
         y = self._yf + zeros
 
@@ -438,10 +439,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_zeros = force_evaluation(actx, actx.np.zeros_like(fluid_nodes[0]))
     
     use_overintegration = False
-    if use_overintegration:
-        quadrature_tag = DISCR_TAG_QUAD
-    else:
-        quadrature_tag = DISCR_TAG_BASE
+    quadrature_tag = DISCR_TAG_BASE
+#    if use_overintegration:
+#        quadrature_tag = DISCR_TAG_QUAD
+#    else:
+#        quadrature_tag = DISCR_TAG_BASE
 
     if rank == 0:
         logger.info("Done making discretization")
@@ -468,7 +470,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     temp_cantera = 300.0
 
     x_fluid = np.zeros(nspecies)
-    x_fluid[cantera_soln.species_index("O2")] = 0#0.90  # FIXME
+    x_fluid[cantera_soln.species_index("O2")] = 0.0 #.90  # FIXME
     x_fluid[cantera_soln.species_index("AR")] = 1.0	
     pres_cantera = cantera.one_atm
 
@@ -625,13 +627,16 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_inflow = FluidInitializer(nspecies=nspecies, pressure=1000,
         temperature=300.0, mach=mach_number_inflow*speedup_factor,
         species_mass_fraction=y_inflow)
-    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
-    inflow_state = make_fluid_state(cv=fluid_inflow(x_vec=inflow_nodes, eos=eos),
-            gas_model=gas_model, temperature_seed=inflow_nodes[0]*0.0 + 300.0)
-    inflow_state = force_evaluation(actx, inflow_state)
+    inflow_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid.trace('inflow')))
+    inflow_cv = fluid_inflow(x_vec=inflow_nodes, eos=eos)
+    inflow_state = make_fluid_state(cv=inflow_cv, gas_model=gas_model,
+        temperature_seed=inflow_nodes[0]*0.0 + 300.0)
+    #inflow_state = force_evaluation(actx, inflow_state)
 
-    def _inflow_boundary_state_func(**kwargs):
-        return inflow_state
+#    def _inflow_boundary_state_func(**kwargs):
+#        return inflow_state
+
+    #sys.exit()
 
     """
     """
@@ -787,7 +792,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
    
     wall_boundary = AdiabaticSlipBoundary()
     glass_tube_boundary = AdiabaticNoslipWallBoundary()
-    inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
+    #inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
+    inflow_boundary = LinearizedInflow2DBoundary(dim=2,
+            free_stream_velocity=inflow_cv.velocity,
+            free_stream_pressure=1000, free_stream_density=inflow_cv.mass,
+            free_stream_species_mass_fractions=inflow_cv.species_mass_fractions)
     surface_boundary = MyPrescribedBoundary(bnd_state_func=surface_bnd_state_func,
                                             temperature_func=bnd_temperature_func)
     outflow_boundary = PressureOutflowBoundary(boundary_pressure=1000)
@@ -798,6 +807,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         dd_vol_fluid.trace("outflow").domain_tag: outflow_boundary,
         dd_vol_fluid.trace("glasstube").domain_tag: glass_tube_boundary,
         dd_vol_fluid.trace("sidewall").domain_tag: wall_boundary}
+
+    #import sys
+    #sys.exit()
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
