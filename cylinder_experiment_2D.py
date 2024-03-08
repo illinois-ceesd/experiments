@@ -155,8 +155,8 @@ class FluidInitializer:
         u_x = 0.0#340.0 * self._mach * 0.5*(1.0 + actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))
         u_y = 340.0 * self._mach
         velocity = make_obj_array([u_x, u_y])
-
-        temperature = 300.0 + zeros #0.5*(1.0 - actx.np.tanh(1.0/1e-4*(radius - 2.25e-3)))*1000.0 + 300.0
+        ##Change surface temps
+        temperature = 0.5*(1.0 - actx.np.tanh(1.0/4e-4*(radius - 3.0e-3)))*(1800.0 - self._temperature) + self._temperature #self._temperature + zeros #
         pressure = self._pressure + zeros
         y = self._yf + zeros
 
@@ -183,8 +183,9 @@ class GasSurfaceReactions:
     
     def __init__(self, cantera_soln, speedup_factor):
         self.o2_index = cantera_soln.species_index("O2")
-        self.co_index = cantera_soln.species_index("CO")
-        self.o_index = cantera_soln.species_index("O")
+        self.co2_index = cantera_soln.species_index("CO2")
+        #self.co_index = cantera_soln.species_index("CO")
+        #self.o_index = cantera_soln.species_index("O")
         self.nspecies = cantera_soln.n_species
         self.speedup_factor = speedup_factor
         
@@ -201,26 +202,26 @@ class GasSurfaceReactions:
         sources = wall_species*0
 
         #constants
-        mw_c = 12.011
-        mw_o = 15.999
+        mw_c = 12.011/1000
+        mw_o = 15.999/1000
         mw_o2 = mw_o*2
-        mw_co2 = 44.010
+        mw_co2 = 44.010/1000
         mw_co = mw_o+mw_c
         univ_gas_const = 8314.46261815324
-        n_avo = 6.0221408e+23
-        kb = 1.38064852e-23
+        n_avo = 6.0221408 #e+23
+        kb = 1.38064852 #e-23
         #reaction rate terms
-        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp)
+        #eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp)
         eps_o2 = (1.43e-3 + 0.01*actx.np.exp(-1450/wall_temp))/(1 + 2e-4* actx.np.exp(13000/wall_temp))
-        f_o2 = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o2/n_avo))
-        f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
-        k_o = f_o*eps_o
+        f_o2 = 0 #0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o2/n_avo))
+        #f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
+        #k_o = f_o*eps_o
         k_o2 = f_o2*eps_o2
         
         #reaction source terms, \dot{W}
         sources[self.o2_index] = -(wall_species[self.o2_index]/mw_o2)*k_o2*mw_o2
-        sources[self.co_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co + (wall_species[self.o_index]/mw_o)*k_o*mw_co
-        sources[self.o_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_o - (wall_species[self.o_index]/mw_o)*k_o*mw_o
+        sources[self.co2_index] =  (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co2 # +(wall_species[self.o_index]/mw_o)*k_o*mw_co
+        #sources[self.o_index] = - (wall_species[self.o_index]/mw_o)*k_o*mw_o # + (wall_species[self.o2_index]/mw_o2)*k_o2*mw_o 
         #Fix energy balance
         
         zeros = cv.mass*0.0
@@ -336,7 +337,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     rst_path = "restart_data/"
-    viz_path = "viz_data/cylinder2DViz/"
+    viz_path = "viz_data/cylinder_2D_O2_330P_1800K_velocitycheck/"
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
@@ -344,7 +345,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0.0000
 
      # default i/o frequencies
-    nviz = 1
+    nviz = 10
     nrestart = 10000
     nhealth = 1
     nstatus = 100
@@ -457,21 +458,22 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # Use Cantera for initialization
     import os
     current_path = os.path.abspath(os.getcwd()) + "/"
-    mechanism_file = current_path + "uiuc_with_O"
+    mechanism_file = current_path + "uiuc_with_O_short2"
 
     from mirgecom.mechanisms import get_mechanism_input
     mech_input = get_mechanism_input(mechanism_file)
 
     cantera_soln = cantera.Solution(name="gas", yaml=mech_input)
     nspecies = cantera_soln.n_species
-
+    print(nspecies)
     # Initial temperature, pressure, and mixture mole fractions are needed to
     # set up the initial state in Cantera.
     temp_cantera = 300.0
 
     x_fluid = np.zeros(nspecies)
-    x_fluid[cantera_soln.species_index("O2")] = 0.0 #.90  # FIXME
-    x_fluid[cantera_soln.species_index("AR")] = 1.0	
+    x_fluid[cantera_soln.species_index("O2")] = 1.0 #.90  # FIXME
+    #x_fluid[cantera_soln.species_index("N2")] = 0.90
+    #x_fluid[cantera_soln.species_index("AR")] = 1.0	
     pres_cantera = cantera.one_atm
 
     cantera_soln.TPX = temp_cantera, pres_cantera, x_fluid
@@ -544,8 +546,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_init = FluidInitializer(nspecies=nspecies, pressure=1000,
-        temperature=300.0, mach=Mach_number*speedup_factor,
+    fluid_init = FluidInitializer(nspecies=nspecies, pressure=330,
+        temperature=310.0, mach=Mach_number*speedup_factor,
         species_mass_fraction=y_fluid_init)
 
 
@@ -617,20 +619,20 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     temp_cantera = 300.0
 
     x_inflow = np.zeros(nspecies)
-    x_inflow[cantera_soln.species_index("N2")] = 0.90  # FIXME
-    x_inflow[cantera_soln.species_index("O")] = 0.10	
+    #x_inflow[cantera_soln.species_index("N2")] = 0.90  # FIXME
+    x_inflow[cantera_soln.species_index("O2")] = 1.0	
     pres_cantera = cantera.one_atm
 
     cantera_soln.TPX = temp_cantera, pres_cantera, x_inflow
     y_inflow = cantera_soln.Y
-    mach_number_inflow = 0.01
-    fluid_inflow = FluidInitializer(nspecies=nspecies, pressure=1000,
-        temperature=300.0, mach=mach_number_inflow*speedup_factor,
+    mach_number_inflow = -1e-3
+    fluid_inflow = FluidInitializer(nspecies=nspecies, pressure=330,
+        temperature=310.0, mach=mach_number_inflow*speedup_factor,
         species_mass_fraction=y_inflow)
     inflow_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid.trace('inflow')))
     inflow_cv = fluid_inflow(x_vec=inflow_nodes, eos=eos)
     inflow_state = make_fluid_state(cv=inflow_cv, gas_model=gas_model,
-        temperature_seed=inflow_nodes[0]*0.0 + 300.0)
+        temperature_seed=inflow_nodes[0]*0.0 + 310.0)
     #inflow_state = force_evaluation(actx, inflow_state)
 
 #    def _inflow_boundary_state_func(**kwargs):
@@ -643,7 +645,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     surface_nodes = force_evaluation(actx,
                                     dcoll.nodes(dd_vol_fluid.trace("surface")))
-    surface_temperature = surface_nodes[0]*0.0 + 300.0
+    surface_temperature = surface_nodes[0]*0.0 + 1800.0
 
     def bnd_temperature_func(dcoll, dd_bdry, gas_model, state_minus, **kwargs):
         return surface_temperature
@@ -793,13 +795,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     wall_boundary = AdiabaticSlipBoundary()
     glass_tube_boundary = AdiabaticNoslipWallBoundary()
     #inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
-    inflow_boundary = LinearizedInflow2DBoundary(dim=2,
+    inflow_boundary = LinearizedInflow2DBoundary(
             free_stream_velocity=inflow_cv.velocity,
-            free_stream_pressure=1000, free_stream_density=inflow_cv.mass,
+            free_stream_pressure=330, free_stream_density=inflow_cv.mass,
             free_stream_species_mass_fractions=inflow_cv.species_mass_fractions)
     surface_boundary = MyPrescribedBoundary(bnd_state_func=surface_bnd_state_func,
                                             temperature_func=bnd_temperature_func)
-    outflow_boundary = PressureOutflowBoundary(boundary_pressure=1000)
+    outflow_boundary = PressureOutflowBoundary(boundary_pressure=330)
 
     boundaries = {
         dd_vol_fluid.trace("inflow").domain_tag: inflow_boundary,
@@ -867,17 +869,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             
     def my_write_viz(step, t, dt, fluid_state):
-
-        sources = hetero_chem.get_hetero_chem_source_terms(
-            fluid_nodes, fluid_state.cv, fluid_state.dv)
-        species_sources = sources.species_mass # already includes the molecular weight
-
+    
         fluid_viz_fields = [
             ("CV_rho", fluid_state.cv.mass),
             ("CV_rhoU", fluid_state.cv.momentum),
             ("CV_rhoE", fluid_state.cv.energy),
+            ("CV_rhoY", fluid_state.cv.species_mass),
+            ("U", fluid_state.velocity),
+            ("mu", fluid_state.viscosity),
+            ("s_l", fluid_state.wavespeed),
+            ("d_alph", fluid_state.species_diffusivity),
             ("DV_P", fluid_state.pressure),
-            ("DV_U", fluid_state.cv.velocity),
             ("DV_T", fluid_state.temperature),
             ("dt", dt[0] if local_dt else None),
         ]
@@ -890,11 +892,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #        # species mass fractions
 #        fluid_viz_fields.extend(
 #            ("dij_"+species_names[i], fluid_state.cv.mass*fluid_state.tv.species_diffusivity[i])
-#            for i in range(nspecies))
-
-#        # species mass fractions
-#        fluid_viz_fields.extend(
-#            ("w_Y_"+species_names[i], species_sources[i])
 #            for i in range(nspecies))
         
         write_visfile(dcoll, fluid_viz_fields, fluid_visualizer,
@@ -1051,9 +1048,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         fluid_source_terms = (
             sponge_func(cv=fluid_state.cv, cv_ref=ref_state.cv, sigma=sponge_sigma)
-            # + hetero_chem.get_hetero_chem_source_terms(fluid_nodes, fluid_state.cv, fluid_state.dv)
+            # + hetero_chem.get_hetero_c
             # + eos.get_species_source_terms(fluid_state.cv, fluid_state.temperature)
-            # add heterogeneous chemistry in here (this should only exist on the surface)
         )
      
         return make_obj_array([fluid_rhs, fluid_zeros])
@@ -1165,7 +1161,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "cylinder_surface_chem2D"
+    casename = "cylinder_2D_O2_330P_1800K_velocitycheck_no_rxn"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
