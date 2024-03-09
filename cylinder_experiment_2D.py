@@ -254,52 +254,11 @@ class InitSponge:
         ypos = x_vec[1]
         actx = xpos.array_context
         zeros = 0*xpos
-
-        sponge_x = xpos*0.0
-        sponge_y = xpos*0.0
-
-        if (self._y_max is not None):
-          y0 = (self._y_max - self._y_thickness)
-          dy = +((ypos - y0)/self._y_thickness)
-          sponge_y = sponge_y + self._amplitude * actx.np.where(
-              actx.np.greater(ypos, y0),
-                  actx.np.where(actx.np.greater(ypos, self._y_max),
-                                1.0, 3.0*dy**2 - 2.0*dy**3),
-                  0.0
-          )
-
-        if (self._y_min is not None):
-          y0 = (self._y_min + self._y_thickness)
-          dy = -((ypos - y0)/self._y_thickness)
-          sponge_y = sponge_y + self._amplitude * actx.np.where(
-              actx.np.less(ypos, y0),
-                  actx.np.where(actx.np.less(ypos, self._y_min),
-                                1.0, 3.0*dy**2 - 2.0*dy**3),
-              0.0
-          )
-
-        if (self._x_max is not None):
-          x0 = (self._x_max - self._x_thickness)
-          dx = +((xpos - x0)/self._x_thickness)
-          sponge_x = sponge_x + self._amplitude * actx.np.where(
-              actx.np.greater(xpos, x0),
-                  actx.np.where(actx.np.greater(xpos, self._x_max),
-                                1.0, 3.0*dx**2 - 2.0*dx**3),
-                  0.0
-          )
-
-        if (self._x_min is not None):
-          x0 = (self._x_min + self._x_thickness)
-          dx = -((xpos - x0)/self._x_thickness)
-          sponge_x = sponge_x + self._amplitude * actx.np.where(
-              actx.np.less(xpos, x0),
-                  actx.np.where(actx.np.less(xpos, self._x_min),
-                                1.0, 3.0*dx**2 - 2.0*dx**3),
-              0.0
-          )
-
-        return actx.np.maximum(sponge_x,sponge_y)
-
+        a_sponge = 0.5*(self._y_max+self._y_min)
+        sponge_y_A = 0.5*(actx.np.tanh((ypos-a_sponge)/1e-2)-1) + 1
+        sponge_y = self._amplitude * sponge_y_A
+        
+        return sponge_y
 
 @mpi_entry_point
 def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
@@ -337,7 +296,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     rst_path = "restart_data/"
-    viz_path = "viz_data/cylinder_2D_O2_330P_1800K_velocitycheck/"
+    viz_path = "viz_data/cylinder_2D_O2_330P_1800K_sponge/"
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
@@ -589,30 +548,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_cv_ref = force_evaluation(actx, fluid_init(x_vec=fluid_nodes, eos=eos))
-    ref_state = get_fluid_state(fluid_cv_ref, fluid_tseed)
-
-    # initialize the sponge field
-    sponge_x_thickness = 0.045
-    #sponge_y_thickness = 0.045
-
-    xMaxLoc = +0.150
-    xMinLoc = -0.15
-    #yMaxLoc = +0.15
-    #yMinLoc = -0.15
-
-    sponge_amp = 400.0 #may need to be modified. Let's see...
-
-    sponge_init = InitSponge(amplitude=sponge_amp,
-        x_min=xMinLoc, #x_max=xMaxLoc,
-        #y_min=yMinLoc, y_max=yMaxLoc,
-        x_thickness=sponge_x_thickness,
-        #y_thickness=sponge_y_thickness
-    )
-
-    sponge_sigma = force_evaluation(actx, sponge_init(x_vec=fluid_nodes))
-    
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    ## Inflow_state and sponge function
 
     # FIXME this boundary conditions are temporary. It will be necessary to 
     # change them in order to match Nic's chamber. 
@@ -640,8 +576,33 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     #sys.exit()
 
+
+    fluid_cv_ref = force_evaluation(actx, fluid_inflow(x_vec=fluid_nodes, eos=eos))
+    ref_state = get_fluid_state(fluid_cv_ref, fluid_tseed)
+
+    # initialize the sponge field
+    sponge_x_thickness = 0.022
+    sponge_y_thickness = 0.085
+
+    xMaxLoc = +0.011
+    xMinLoc = -0.011
+    yMaxLoc = +0.185
+    yMinLoc = 0.10
+
+    sponge_amp = 500.0 #may need to be modified. Let's see...
+
+    sponge_init = InitSponge(x_min=xMinLoc, x_max=xMaxLoc,
+        y_min=yMinLoc, y_max=yMaxLoc,
+        x_thickness=sponge_x_thickness,
+        y_thickness=sponge_y_thickness,
+        amplitude = sponge_amp
+    )
+
+    sponge_sigma = force_evaluation(actx, sponge_init(x_vec=fluid_nodes))
+
     """
     """
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     surface_nodes = force_evaluation(actx,
                                     dcoll.nodes(dd_vol_fluid.trace("surface")))
@@ -807,7 +768,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         dd_vol_fluid.trace("inflow").domain_tag: inflow_boundary,
         dd_vol_fluid.trace("surface").domain_tag: surface_boundary,
         dd_vol_fluid.trace("outflow").domain_tag: outflow_boundary,
-        dd_vol_fluid.trace("glasstube").domain_tag: glass_tube_boundary,
+        dd_vol_fluid.trace("glass_slip").domain_tag: wall_boundary,
+        dd_vol_fluid.trace("glass_noslip").domain_tag: glass_tube_boundary,
         dd_vol_fluid.trace("sidewall").domain_tag: wall_boundary}
 
     #import sys
@@ -881,6 +843,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             ("d_alph", fluid_state.species_diffusivity),
             ("DV_P", fluid_state.pressure),
             ("DV_T", fluid_state.temperature),
+            ("Sponge_sigma", sponge_sigma),
             ("dt", dt[0] if local_dt else None),
         ]
 
@@ -1052,7 +1015,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             # + eos.get_species_source_terms(fluid_state.cv, fluid_state.temperature)
         )
      
-        return make_obj_array([fluid_rhs, fluid_zeros])
+        return make_obj_array([fluid_rhs+fluid_source_terms, fluid_zeros])
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1161,7 +1124,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "cylinder_2D_O2_330P_1800K_velocitycheck_no_rxn"
+    casename = "cylinder_2D_O2_330P_1800K_sponge_no_rxn"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")

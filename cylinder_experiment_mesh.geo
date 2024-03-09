@@ -29,6 +29,9 @@ Point(12) = { 0.01,  0.006, 0.0, lcar1};
 Point(13) = { 0.01, -0.01, 0.0, lcar1};
 Point(14) = {-0.01, -0.01, 0.0, lcar1};
 
+Point(15) = { 0.014, 0.005, 0.0, lcar1};
+Point(16) = {-0.014, 0.005, 0.0, lcar1};
+
 Point(17)  = {-rad_out, -y, 0.0, lcar4};
 Point(18)  = { rad_out, -y, 0.0, lcar4};
 
@@ -37,8 +40,11 @@ Point(30) = {r_glass,  y, 0.0, lcar3};
 Point(31) = {r_glass,  y-l_glass, 0.0, lcar3};
 Point(32) = {r_glass-t_glass,  y-l_glass, 0.0, lcar3};
 
-Point(33) = {r_glass-t_glass,  y_glass, 0.0, lcar3};
-Point(34) = {-r_glass+t_glass,  y_glass, 0.0, lcar3};
+Point(33) = {r_glass-t_glass,  y_glass, 0.0, lcar4};
+Point(34) = {-r_glass+t_glass,  y_glass, 0.0, lcar4};
+
+Point(83) = {r_glass-t_glass,  0.1, 0.0, lcar3};
+Point(84) = {-r_glass+t_glass,  0.1, 0.0, lcar3};
 
 Point(35) = {-r_glass+t_glass,  y-l_glass, 0.0, lcar3};
 Point(36) = {-r_glass,  y-l_glass, 0.0, lcar3};
@@ -103,9 +109,11 @@ Circle(10) = {6, 4, 2};
 Line(20) = {9, 30};
 Line(21) = {30, 31};
 Line(22) = {31, 32};
-Line(23) = {32, 33};
+Line(23) = {32, 83};
+Line(83) = {83, 33};
 Line(24) = {33, 34};
-Line(25) = {34, 35};
+Line(84) = {34, 84};
+Line(25) = {84, 35};
 Line(26) = {35, 36};
 Line(27) = {36, 37};
 Line(28) = {37, 10};
@@ -118,14 +126,14 @@ Transfinite Line { 5} = 4 Using Progression 1.0;
 Transfinite Line { 7} = 4 Using Progression 1.0;
 
 
-Line Loop(101) = {1,31,2,3,20:28,4,9,10};
+Line Loop(101) = {1,31,2,3,20:23,83,24,84,25:28,4,9,10};
 Line Loop(103) = {5,6,7,-9};
 Line Loop(104) = {-8,5,10,7};
 
 
 //Define unstructured far field mesh zone
 Plane Surface(201) = {-101};
-Point{11:14} In Surface{201};
+Point{11:16} In Surface{201};
 Point{41:64} In Surface{201};
 
 Plane Surface(203) = {103};
@@ -136,7 +144,8 @@ Transfinite Surface{204} Alternate;
 
 
 Physical Line("inflow") = {24};
-Physical Line("glasstube") = {21,22,23,25,26,27};
+Physical Line("glass_slip") = {83,84};
+Physical Line("glass_noslip") = {21,22,23,25,26,27};
 Physical Line("surface") = {6,8};
 Physical Line("outflow") = {31};
 Physical Line("sidewall")={1,2,3,4,28,20};
