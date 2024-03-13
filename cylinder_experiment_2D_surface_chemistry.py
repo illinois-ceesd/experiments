@@ -975,15 +975,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    def _get_rhs(t,state):
-    
-        fluid_cv, fluid_tseed = state
+    def _get_rhs(t, fluid_state):
 
         fluid_zeros = actx.np.zeros_like(fluid_cv.mass)
-
-        fluid_state = make_fluid_state(cv=fluid_cv, gas_model=gas_model,
-            temperature_seed=fluid_tseed, limiter_func=_limit_fluid_cv,
-            limiter_dd=dd_vol_fluid)
 
         fluid_operator_states_quad = make_operator_fluid_states(
             dcoll, fluid_state, gas_model, boundaries,
@@ -1010,7 +1004,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             operator_states_quad=fluid_operator_states_quad,
             grad_cv=fluid_grad_cv, grad_t=fluid_grad_temperature,
             comm_tag=_FluidOperatorTag, inviscid_terms_on=True)
-       
 
         fluid_source_terms = (
             sponge_func(cv=fluid_state.cv, cv_ref=ref_state.cv, sigma=sponge_sigma)
@@ -1025,10 +1018,12 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
     def my_rhs(t, state):
-    
-        rhs_state = get_rhs_compiled(t, state)
+
+        fluid_cv, fluid_tseed = state
+
+        fluid_state = get_fluid_state(fluid_cv, fluid_tseed)
  
-        return rhs_state
+        return get_rhs_compiled(t, fluid_state)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1086,7 +1081,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                       dt=dt, t_final=t_final, t=t,
                       local_dt=local_dt, max_steps=5000000,
                       istep=current_step,
-                      force_eval=force_eval)
+                      force_eval=force_eval,
+                      compile_rhs=False)
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
