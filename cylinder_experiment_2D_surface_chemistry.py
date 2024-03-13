@@ -975,7 +975,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    def my_rhs(t, state):
+    def _get_rhs(t,state):
+    
         fluid_cv, fluid_tseed = state
 
         fluid_zeros = actx.np.zeros_like(fluid_cv.mass)
@@ -1017,7 +1018,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             # + eos.get_species_source_terms(fluid_state.cv, fluid_state.temperature)
         )
      
-        return make_obj_array([fluid_rhs+fluid_source_terms, fluid_zeros])
+        return make_obj_array([fluid_rhs+fluid_source_terms, fluid_zeros])     
+
+    get_rhs_compiled = actx.compile(_get_rhs)
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    def my_rhs(t, state):
+    
+        rhs_state = get_rhs_compiled(t, state)
+ 
+        return rhs_state
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

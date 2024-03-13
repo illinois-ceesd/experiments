@@ -12,7 +12,7 @@ rad_out = 0.02;
 r_glass = 125e-4;
 t_glass = 15e-4;
 l_glass = 0.085;
-y_glass = 0.185;
+y_glass = 0.3;
 
 Point(2)  = { -0.003,   0.0, 0.0, lcar0};
 Point(3)  = { -0.0015,   0.0, 0.0, lcar0};
@@ -40,11 +40,11 @@ Point(30) = {r_glass,  y, 0.0, lcar3};
 Point(31) = {r_glass,  y-l_glass, 0.0, lcar3};
 Point(32) = {r_glass-t_glass,  y-l_glass, 0.0, lcar3};
 
-Point(33) = {r_glass-t_glass,  y_glass, 0.0, lcar4};
-Point(34) = {-r_glass+t_glass,  y_glass, 0.0, lcar4};
+Point(33) = {r_glass-t_glass,  y_glass, 0.0, lcar4*2};
+Point(34) = {-r_glass+t_glass,  y_glass, 0.0, lcar4*2};
 
-Point(83) = {r_glass-t_glass,  0.1, 0.0, lcar3};
-Point(84) = {-r_glass+t_glass,  0.1, 0.0, lcar3};
+Point(83) = {r_glass-t_glass,  0.15, 0.0, lcar3};
+Point(84) = {-r_glass+t_glass,  0.15, 0.0, lcar3};
 
 Point(35) = {-r_glass+t_glass,  y-l_glass, 0.0, lcar3};
 Point(36) = {-r_glass,  y-l_glass, 0.0, lcar3};
@@ -52,8 +52,6 @@ Point(37) = {-r_glass,  y, 0.0, lcar3};
 
 //Glass tube inside coarser mesh
 
-Point(41) = {r_glass-t_glass - 5e-3,  y-0.01, 0.0, lcar4};
-Point(42) = {-r_glass+t_glass + 5e-3,  y-0.01, 0.0, lcar4};
 Point(43) = {-r_glass+t_glass + 5e-3,  y-l_glass + 0.02, 0.0, lcar4};
 Point(44) = {r_glass-t_glass - 5e-3,  y-l_glass + 0.02, 0.0, lcar4};
 
@@ -84,6 +82,7 @@ Point(61) = {-r_glass+t_glass + 5e-3,  y-l_glass + 0.155, 0.0, lcar4};
 Point(62) = {r_glass-t_glass - 5e-3,  y-l_glass + 0.155, 0.0, lcar4};
 Point(63) = {-r_glass+t_glass + 5e-3,  y-l_glass + 0.170, 0.0, lcar4};
 Point(64) = {r_glass-t_glass - 5e-3,  y-l_glass + 0.170, 0.0, lcar4};
+
 //Point(48) = {r_glass-t_glass - 3e-3,  y-l_glass + 0.065, 0.0, lcar4};
 //Define bounding box edges
 Line(1) = {7, 17};
@@ -118,10 +117,10 @@ Line(26) = {35, 36};
 Line(27) = {36, 37};
 Line(28) = {37, 10};
 
-Transfinite Line { 6} = 16 Using Progression 1.0;
-Transfinite Line { 8} = 16 Using Progression 1.0;
-Transfinite Line { 9} = 16 Using Progression 1.0;
-Transfinite Line {10} = 16 Using Progression 1.0;
+Transfinite Line { 6} = 12 Using Progression 1.0;
+Transfinite Line { 8} = 12 Using Progression 1.0;
+Transfinite Line { 9} = 12 Using Progression 1.0;
+Transfinite Line {10} = 12 Using Progression 1.0;
 Transfinite Line { 5} = 4 Using Progression 1.0;
 Transfinite Line { 7} = 4 Using Progression 1.0;
 
@@ -134,7 +133,7 @@ Line Loop(104) = {-8,5,10,7};
 //Define unstructured far field mesh zone
 Plane Surface(201) = {-101};
 Point{11:16} In Surface{201};
-Point{41:64} In Surface{201};
+Point{43:64} In Surface{201};
 
 Plane Surface(203) = {103};
 Transfinite Surface{203} Alternate;
