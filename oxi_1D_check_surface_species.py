@@ -189,62 +189,68 @@ class GasSurfaceReactions:
         self.chem_flag = chem_flag
         
     def steady_state_solution(self, cv, nodes):
-    	actx = cv.mass.array_context
-    	d_alph = 1e-3
-    	l_x = 1.5e-3
-    	rho_c = 1.6e-1
-    	mw_c = 12/1000
-    	mw_o = 16/1000
-    	mw_co = mw_o +  mw_c
-    	mw_o2 = 2*mw_o #16/1000
-    	univ_gas_const = 8314.46261815324
-    	n_avo = 6.0221408 #e+23
-    	kb = 1.38064852 #e-23
-    	x_arr = nodes[1]
-    	Y_O_ss_arr = 1.0*x_arr
-    	if self.chem_flag == "catalysis":
-    	        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
-            	f_o2 = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o2/n_avo))
-    	        f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
-    	        k_o = f_o*f_o*eps_o
-    	        a = 1.0
-    	        b = d_alph/(l_x*k_o*rho_c)
-    	        c = -1.0*b
-    	        Y_o_ss = (-b + actx.np.sqrt(b*b - 4*a*c))/(2*a)
-    	        Y_O_ss_arr = 0.0*cv.species_mass_fractions[self.o_index] + 1.0
-    	        Y_O_ss_arr = Y_o_ss + ((1-Y_o_ss)/l_x)*nodes[1]*Y_O_ss_arr
-    	        Y_O2_ss_arr = 1.0 - Y_O_ss_arr
-    	        Y_CO_ss_arr = 0.0*nodes[1]
-    	        return Y_O_ss_arr, Y_CO_ss_arr, Y_O2_ss_arr
-    	if self.chem_flag == "oxidation":
-    	        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
-    	        f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
-    	        k_o = f_o*eps_o
-    	        v_y = 0.3635
-    	        d_alph = 1e-3
-    	        exp_c = v_y*l_x/d_alph
-    	        d_inv = 1 - (1+v_y/k_o)*actx.np.exp(exp_c)
-    	        d = 1/d_inv
-    	        c = -1*d*(1+v_y/k_o)
-    	        Y_O_ss_arr = c*actx.np.exp((v_y/d_alph)*nodes[1]) + d
-    	        Y_CO_ss_arr = 1.0 - Y_O_ss_arr
-    	        Y_O2_ss_arr = 0.0*nodes[1]
-    	        return Y_O_ss_arr, Y_CO_ss_arr, Y_O2_ss_arr
-    	#Y_O2_ss_arr = cv.species_mass_fractions[self.o_index].copy()
-    	#print(Y_O_ss_arr)
+        return cv.mass*0.0, cv.mass*0.0, cv.mass*0.0
+#    	actx = cv.mass.array_context
+#    	d_alph = 1e-3
+#    	l_x = 1.5e-3
+#    	rho_c = 1.6e-1
+#    	mw_c = 12/1000
+#    	mw_o = 16/1000
+#    	mw_co = mw_o +  mw_c
+#    	mw_o2 = 2*mw_o #16/1000
+#    	univ_gas_const = 8314.46261815324
+#    	n_avo = 6.0221408 #e+23
+#    	kb = 1.38064852 #e-23
+#    	x_arr = nodes[1]
+#    	Y_O_ss_arr = 1.0*x_arr
+
+#    	if self.chem_flag == "catalysis":
+#	        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
+#        	f_o2 = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o2/n_avo))
+#	        f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
+#	        k_o = f_o*f_o*eps_o
+#	        a = 1.0
+#	        b = d_alph/(l_x*k_o*rho_c)
+#	        c = -1.0*b
+#	        Y_o_ss = (-b + actx.np.sqrt(b*b - 4*a*c))/(2*a)
+#	        Y_O_ss_arr = 0.0*cv.species_mass_fractions[self.o_index] + 1.0
+#	        Y_O_ss_arr = Y_o_ss + ((1-Y_o_ss)/l_x)*nodes[1]*Y_O_ss_arr
+#	        Y_O2_ss_arr = 1.0 - Y_O_ss_arr
+#	        Y_CO_ss_arr = 0.0*nodes[1]
+
+#	        return Y_O_ss_arr, Y_CO_ss_arr, Y_O2_ss_arr
+
+#    	if self.chem_flag == "oxidation":
+#	        eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp) 
+#	        f_o = 0.25*actx.np.sqrt(8*kb*700/(np.pi * mw_o/n_avo))
+#	        k_o = f_o*eps_o
+#	        v_y = 0.3635
+#	        d_alph = 1e-3
+#	        exp_c = v_y*l_x/d_alph
+#	        d_inv = 1 - (1+v_y/k_o)*actx.np.exp(exp_c)
+#	        d = 1/d_inv
+#	        c = -1*d*(1+v_y/k_o)
+#	        Y_O_ss_arr = c*actx.np.exp((v_y/d_alph)*nodes[1]) + d
+#	        Y_CO_ss_arr = 1.0 - Y_O_ss_arr
+#	        Y_O2_ss_arr = 0.0*nodes[1]
+
+#	        return Y_O_ss_arr, Y_CO_ss_arr, Y_O2_ss_arr
+
+#        #if self.chem_flag == "surface_only":
+#        else:
+#	        return cv.mass*0.0, cv.mass*0.0, cv.mass*0.0
     	
     	
-    def get_hetero_chem_source_terms(self, nodes, cv, dv):
+    def get_hetero_chem_source_terms(self, nodes, cv, dv, surface_species):
         actx = cv.mass.array_context
         
-        #dd_face = dd.trace('surface')
-        #wall_temp = op.project(dcoll, dd, dd_face, dv.temperature)
-        #wall_species = op.project(dcoll, dd, dd_face, cv.species_mass)
-        radius = actx.np.sqrt(nodes[0]**2 + nodes[1]**2)
-        wall_flag = actx.np.less(radius,0.0015+1e-7)
+#        radius = actx.np.sqrt(nodes[0]**2 + nodes[1]**2)
+#        wall_flag = actx.np.less(radius,0.0015+1e-7)
         wall_temp = dv.temperature
-        wall_species = cv.species_mass
-        sources = wall_species*0
+        fluid_species = cv.species_mass
+        fluid_sources = fluid_species*0.
+
+        surface_sources = surface_species*0.
 
         #constants
         mw_c = 12/1000
@@ -261,38 +267,44 @@ class GasSurfaceReactions:
         f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
         
         if self.chem_flag == "catalysis":
-                k_o = f_o*f_o*eps_o
-                sources[self.o_index] =  - k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
-                sources[self.o2_index] = k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
-                sources[self.co_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co + (wall_species[self.o_index]/mw_o)*k_o*mw_co
+            k_o = f_o*f_o*eps_o
+            fluid_sources[self.o_index] =  - k_o*(fluid_species[self.o_index])*(fluid_species[self.o_index])
+            fluid_sources[self.o2_index] = k_o*(fluid_species[self.o_index])*(fluid_species[self.o_index])
+            fluid_sources[self.co_index] = (fluid_species[self.o2_index]/mw_o2)*k_o2*mw_co + (fluid_species[self.o_index]/mw_o)*k_o*mw_co
         if self.chem_flag == "oxidation":
-                k_o = f_o*eps_o
-                sources[self.co_index] =  (wall_species[self.o_index]/mw_o)*k_o*mw_co
-                sources[self.o_index] =  - (wall_species[self.o_index]/mw_o)*k_o*mw_o
-     
-   	# wall_species -> rho_Y mass/volume need to convert it to concentrations and back 
+            k_o = f_o*eps_o
+            fluid_sources[self.co_index] =  (fluid_species[self.o_index]/mw_o)*k_o*mw_co
+            fluid_sources[self.o_index] =  - (fluid_species[self.o_index]/mw_o)*k_o*mw_o
+        if self.chem_flag == "surface_only":
+            k_o = f_o*eps_o
+            rate_0 = k_o*100 # XXX
+            surface_sources[0] = - (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] + surface_species[1]*rate_0
+            surface_sources[1] = + (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] - surface_species[1]*rate_0
+
+   	# fluid_species -> rho_Y mass/volume need to convert it to concentrations and back 
         
         
         #reaction source terms, \dot{W}
         #O + O + (s)-> O2 + (s) Surface catalysis of O check
-        #sources[self.o_index] =  - k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
-        #sources[self.o2_index] = k_o*(wall_species[self.o_index])*(wall_species[self.o_index])
-        #sources[self.co_index] = (wall_species[self.o2_index]/mw_o2)*k_o2*mw_co + (wall_species[self.o_index]/mw_o)*k_o*mw_co
+        #fluid_sources[self.o_index] =  - k_o*(fluid_species[self.o_index])*(fluid_species[self.o_index])
+        #fluid_sources[self.o2_index] = k_o*(fluid_species[self.o_index])*(fluid_species[self.o_index])
+        #fluid_sources[self.co_index] = (fluid_species[self.o2_index]/mw_o2)*k_o2*mw_co + (fluid_species[self.o_index]/mw_o)*k_o*mw_co
        
  
         #Fix energy balance
-        #print(sources)
-        #sys.exit()
-        zeros = cv.mass*0.0
-        species_source = make_obj_array([
-            actx.np.where(wall_flag, sources[i]*self.speedup_factor, zeros) for i in range(self.nspecies)
-        ])
+
+#        zeros = cv.mass*0.0
+#        fluid_species_source = make_obj_array([
+#            #actx.np.where(wall_flag, fluid_sources[i]*self.speedup_factor, zeros) for i in range(self.nspecies)
+#            fluid_sources[i]*self.speedup_factor for i in range(self.nspecies)
+#        ])
         
         #h_f = -32.3e3
         #dt_E = h_f*(cv.species_mass/mw_o2)*k_o2
-        #actx.np.where(wall_flag,sources[i],0)
-        return make_conserved(dim=2, mass=zeros, momentum=make_obj_array([zeros, zeros]), energy=zeros, species_mass=species_source)
 
+        return fluid_sources, surface_sources
+
+    
 
 class InitSponge:
 
@@ -368,7 +380,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         filename=f"{casename}.sqlite", mode="wo", mpi_comm=comm)
 
     from mirgecom.array_context import initialize_actx, actx_class_is_profiling
-    actx = initialize_actx(actx_class, comm)
+    actx = initialize_actx(actx_class, comm,
+                           use_axis_tag_inference_fallback=use_tpe,
+                           use_einsum_inference_fallback=True)
     queue = getattr(actx, "queue", None)
     use_profiling = actx_class_is_profiling(actx_class)
 
@@ -383,7 +397,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0 #0.00025
 
      # default i/o frequencies
-    nviz = 1000
+    nviz = 10
     nrestart = 5000
     nhealth = 1
     nstatus = 100
@@ -392,13 +406,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 2e-3
+    t_final = 100.0
     speedup_factor = 1.0
 
     local_dt = False
-    constant_cfl = True
+    constant_cfl = False
     current_cfl = 0.2 if use_tpe else 0.4
-    current_dt = 1e-9 #dummy if constant_cfl = True
+    current_dt = 1e-6 #dummy if constant_cfl = True
     
     # discretization and model control
     order = 2
@@ -480,6 +494,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         local_mesh = volume_to_local_mesh_data
         local_nelements = local_mesh.nelements
 
+        my_file = open("surface_species.dat", "w")
+        my_file.close()
+
     else:  # Restart
         from mirgecom.restart import read_restart_data
         restart_data = read_restart_data(actx, restart_file)
@@ -502,11 +519,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     if rank == 0:
         logger.info("Done making discretization")
  
-    fluid_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid))
+    fluid_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid))
     fluid_zeros = force_evaluation(actx, actx.np.zeros_like(fluid_nodes[0]))
 
-    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace('inflow')))
-    surface_nodes = force_evaluation(actx, dcoll.nodes(dd_vol_fluid.trace("surface")))
+    inflow_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid.trace('inflow')))
+    surface_nodes = actx.thaw(dcoll.nodes(dd_vol_fluid.trace("surface")))
     surface_zeros = surface_nodes[0]*0.0
     dd_bdry_surface = BoundaryDomainTag("surface")
     project_to_reactive_surface = partial(
@@ -564,7 +581,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         thermal_conductivity=2e-3*10.0, species_diffusivity=const_d_alph)
 
     gas_model = GasModel(eos=eos, transport=transport_model)
-    chem_type = "oxidation"
+    #chem_type = "oxidation"
+    chem_type = "surface_only"
     hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor, chem_type)
     
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -614,8 +632,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     fluid_init2 = FluidInitializer(nspecies=nspecies, pressure=30000,
         temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid2)
 
-    surface_species = surface_zeros
-
     if restart_file is None:
         current_step = 0
         current_t = 0.0
@@ -624,6 +640,12 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         fluid_cv = fluid_init(fluid_nodes, eos)
         fluid_tseed = temperature_seed + fluid_zeros
+
+        # initialize the surface species
+        nspecies_surface = 2
+        surface_species = make_obj_array([surface_zeros for _ in range(nspecies_surface)])
+        surface_species[0] = 1e-5 + surface_zeros
+        surface_species[1] = 0. + surface_zeros
 
     else:
         if rank == 0:
@@ -637,6 +659,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         fluid_cv = restart_data["fluid_cv"]
         fluid_tseed = restart_data["fluid_temperature_seed"]
+        surface_species = restart_data["surface_species"]
 
     first_step = current_step*1.0
 
@@ -678,8 +701,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         y = state_minus.cv.species_mass_fractions
 
-        sources = hetero_chem.get_hetero_chem_source_terms(surface_nodes, state_minus.cv, state_minus.dv)
-        species_sources = sources.species_mass # already includes the molecular weight
+        species_sources = hetero_chem.get_hetero_chem_source_terms(surface_nodes, state_minus.cv, state_minus.dv)
 
         mass = eos.get_density(state_minus.pressure, temperature, y)
 
@@ -763,8 +785,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         def grad_cv_bc(
                 self, state_plus, state_minus, grad_cv_minus, normal, **kwargs):
             """Return grad(CV) for boundary calculation of viscous flux."""
-            sources = hetero_chem.get_hetero_chem_source_terms(surface_nodes, state_minus.cv, state_minus.dv)
-            species_sources = sources.species_mass # already includes the molecular weight
+            species_sources = hetero_chem.get_hetero_chem_source_terms(surface_nodes, state_minus.cv, state_minus.dv)
 
             grad_y_bc = 0.*grad_cv_minus.species_mass
             grad_species_mass_bc = 0.*grad_cv_minus.species_mass
@@ -863,7 +884,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
             
-    def my_write_viz(step, t, dt, fluid_state):
+    def my_write_viz(step, t, dt, fluid_state, surface_species):
 
 #        fluid_operator_states_quad = make_operator_fluid_states(
 #            dcoll, fluid_state, gas_model, boundaries,
@@ -889,13 +910,42 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 #            time=t, quadrature_tag=quadrature_tag, dd=dd_vol_fluid,
 #            operator_states_quad=fluid_operator_states_quad,
 #            grad_cv=fluid_grad_cv, grad_t=fluid_grad_temperature,
-#            comm_tag=_FluidOperatorTag, inviscid_terms_on=True)  
+#            comm_tag=_FluidOperatorTag, inviscid_terms_on=True)
 
+
+        min_species_0 = np.min(actx.to_numpy(surface_species[0]))
+        max_species_0 = np.max(actx.to_numpy(surface_species[0]))
+        species_0 = 0.5*(min_species_0 + max_species_0)
+
+        min_species_1 = np.min(actx.to_numpy(surface_species[1]))
+        max_species_1 = np.max(actx.to_numpy(surface_species[1]))
+        species_1 = 0.5*(min_species_1 + max_species_1)
+
+        surface_cv = project_to_reactive_surface(fluid_state.cv)
+        surface_dv = project_to_reactive_surface(fluid_state.dv)
+        _, surface_species_rhs = hetero_chem.get_hetero_chem_source_terms(
+            surface_nodes, surface_cv, surface_dv, surface_species)
+
+        min_species_0 = np.min(actx.to_numpy(surface_species_rhs[0]))
+        max_species_0 = np.max(actx.to_numpy(surface_species_rhs[0]))
+        rhs_species_0 = 0.5*(min_species_0 + max_species_0)
+
+        min_species_1 = np.min(actx.to_numpy(surface_species_rhs[1]))
+        max_species_1 = np.max(actx.to_numpy(surface_species_rhs[1]))
+        rhs_species_1 = 0.5*(min_species_1 + max_species_1)
+
+        my_file = open("surface_species.dat", "a")
+        my_file.write(f"{t:.14f}, {species_0}, {species_1}, {rhs_species_0}, {rhs_species_1}\n")
+        my_file.close()
+
+        gc.freeze()
+
+        """
         fluid_viz_fields = [
             ("CV_rho", fluid_state.cv.mass),
             ("CV_rhoU", fluid_state.cv.momentum),
             ("CV_rhoE", fluid_state.cv.energy),
-            ("CV_rhoY", fluid_state.cv.species_mass),
+            # ("CV_rhoY", fluid_state.cv.species_mass),
             ("U", fluid_state.velocity),
             ("mu", fluid_state.viscosity),
             ("s_l", fluid_state.wavespeed),
@@ -922,6 +972,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         write_visfile(dcoll, fluid_viz_fields, fluid_visualizer,
             vizname=vizname+"-fluid", step=step, t=t,
             overwrite=True, comm=comm)
+        """
 
     def my_write_restart(step, t, state):
         if rank == 0:
@@ -1021,7 +1072,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                     raise MyRuntimeError("Failed simulation health check.")
 
             if check_step(step=step, interval=nviz):
-                my_write_viz(step=step, t=t, dt=dt, fluid_state=fluid_state)
+                my_write_viz(step=step, t=t, dt=dt, fluid_state=fluid_state,
+                             surface_species=surf_species)
 
             if check_step(step=step, interval=nrestart):
                 my_write_restart(step=step, t=t, state=state)
@@ -1044,6 +1096,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             temperature_seed=fluid_tseed, limiter_func=_limit_fluid_cv,
             limiter_dd=dd_vol_fluid)
 
+        """
         # ~~~
         dummy_cv = fluid_init(x_vec=inflow_nodes, eos=eos)
         y = dummy_cv.species_mass_fractions
@@ -1085,10 +1138,15 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             operator_states_quad=fluid_operator_states_quad,
             grad_cv=fluid_grad_cv, grad_t=fluid_grad_temperature,
             comm_tag=_FluidOperatorTag, inviscid_terms_on=True)
+        """
 
-        surface_species_rhs = surface_zeros #XXX
+        surface_cv = project_to_reactive_surface(fluid_state.cv)
+        surface_dv = project_to_reactive_surface(fluid_state.dv)
+        _, surface_species_rhs = hetero_chem.get_hetero_chem_source_terms(
+            surface_nodes, surface_cv, surface_dv, surface_species)
      
-        return make_obj_array([fluid_rhs, fluid_zeros, surface_species_rhs])
+        # XXX return make_obj_array([fluid_rhs, fluid_zeros, surface_species_rhs])
+        return make_obj_array([fluid_zeros, fluid_zeros, surface_species_rhs])
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1153,7 +1211,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     if rank == 0:
         logger.info("Checkpointing final state ...")
 
-    final_cv, tseed = stepper_state
+    final_cv, tseed, _ = stepper_state
 
     final_fluid_state = get_fluid_state(final_cv, tseed)
     
