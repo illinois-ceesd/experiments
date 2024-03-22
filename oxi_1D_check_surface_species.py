@@ -258,14 +258,18 @@ class GasSurfaceReactions:
         mw_o2 = 2*mw_o #16/1000
         mw_co = mw_o +  mw_c
         univ_gas_const = 8314.46261815324
-        n_avo = 6.0221408 #e+23
-        kb = 1.38064852 #e-23
+        n_avo = 6.0221408e+23
+        kb = 1.38064852e-23
+        h_const = 6.62607015e-34
+        surf_site_dens = 1e-5
         #reaction rate terms
         eps_o = 0.1 #0.63*actx.np.exp(-1160/wall_temp)
         eps_o2 = 0.0 #(1.43e-3 + 0.01*actx.np.exp(-1450/wall_temp))/(1 + 2e-4* actx.np.exp(13000/wall_temp))
         f_o2 = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o2/n_avo))
+        f_o2d = actx.np.sqrt(np.pi*kb*wall_temp/(2*mw_o/n_avo))
         f_o = 0.25*actx.np.sqrt(8*kb*wall_temp/(np.pi * mw_o/n_avo))
-        
+        o_des_pre = 2*np.pi*(mw_o/n_avo)*kb*kb*wall_temp*wall_temp/(n_avo*surf_site_dens*h_const*h_const*h_const)
+        o_recomb_pre = actx.np.sqrt(n_avo/surf_site_dens) * f_o2d
         if self.chem_flag == "catalysis":
             k_o = f_o*f_o*eps_o
             fluid_sources[self.o_index] =  - k_o*(fluid_species[self.o_index])*(fluid_species[self.o_index])
@@ -276,10 +280,24 @@ class GasSurfaceReactions:
             fluid_sources[self.co_index] =  (fluid_species[self.o_index]/mw_o)*k_o*mw_co
             fluid_sources[self.o_index] =  - (fluid_species[self.o_index]/mw_o)*k_o*mw_o
         if self.chem_flag == "surface_only":
-            k_o = f_o*eps_o
-            rate_0 = k_o*100 # XXX
-            surface_sources[0] = - (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] + surface_species[1]*rate_0
-            surface_sources[1] = + (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] - surface_species[1]*rate_0
+            surf_site_dens = 1e-5
+            k_o = f_o*eps_o/surf_site_dens
+            rate_des = 5000 # XXX
+            surface_sources[0] = - (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] + surface_species[1]*rate_des
+            surface_sources[1] = + (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] - surface_species[1]*rate_des
+        if self.chem_flag == "new_model_O2":
+            surf_site_dens = 1e-5
+            k_ox1 = f_o2/(surf_site_dens*surf_site_dens) * actx.np.exp(-7600.0/wall_temp)
+            k_ox2 = 100.0*f_o2/(surf_site_dens) * actx.np.exp(-4000.0/wall_temp)
+            k_ox3 = f_o2/(surf_site_dens) * actx.np.exp(-500.0/wall_temp)
+            k_o_des = o_des_pre * actx.np.exp(-44277.0/wall_temp)
+            k_o_recomb = o_recomb_pre * 5e-5 * actx.np.exp(-15000.0/wall_temp) 
+            surface_sources[1] = + 2*(fluid_species[self.o2_index]/mw_o2)*k_ox1*surface_species[0]*surface_species[0] - (fluid_species[self.o2_index]/mw_o2)*k_ox2*surface_species[1] - \
+                                        - (fluid_species[self.o2_index]/mw_o2)*k_ox2*surface_species[1] - k_o_des*surface_species[1] - 2*k_o_recomb*surface_species[1]*surface_species[1]
+            surface_sources[0] = -1.0 * surface_sources[1]
+            
+           
+           
 
    	# fluid_species -> rho_Y mass/volume need to convert it to concentrations and back 
         
@@ -388,8 +406,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    rst_path = "restart_data/oxidation/"
-    viz_path = "viz_data/oxidation/"
+    rst_path = "restart_data/surf_species/"
+    viz_path = "viz_data/surf_species/"
     vizname = viz_path+casename
     rst_pattern = rst_path+"{cname}-{step:06d}-{rank:04d}.pkl"
 
@@ -397,7 +415,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     Mach_number = 0 #0.00025
 
      # default i/o frequencies
-    nviz = 10
+    nviz = 100
     nrestart = 5000
     nhealth = 1
     nstatus = 100
@@ -406,13 +424,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 100.0
+    t_final = 1e-4
     speedup_factor = 1.0
 
     local_dt = False
     constant_cfl = False
     current_cfl = 0.2 if use_tpe else 0.4
-    current_dt = 1e-6 #dummy if constant_cfl = True
+    current_dt = 1e-9 #dummy if constant_cfl = True
     
     # discretization and model control
     order = 2
@@ -549,8 +567,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     temp_cantera = fluid_temperature
 
     x_fluid = np.zeros(nspecies)
-    #x_fluid[cantera_soln.species_index("O2")] = 0 #0.90  # FIXME
-    x_fluid[cantera_soln.species_index("O")] = 1 #0.10	
+    x_fluid[cantera_soln.species_index("O2")] = 1 #0.90  # FIXME
+    #x_fluid[cantera_soln.species_index("O")] = 1 #0.10	
     pres_cantera = cantera.one_atm
 
     cantera_soln.TPX = temp_cantera, pres_cantera, x_fluid
@@ -582,7 +600,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     gas_model = GasModel(eos=eos, transport=transport_model)
     #chem_type = "oxidation"
-    chem_type = "surface_only"
+    chem_type = "new_model_O2"
     hetero_chem = GasSurfaceReactions(cantera_soln, speedup_factor, chem_type)
     
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -627,9 +645,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    fluid_init = FluidInitializer(nspecies=nspecies, pressure=30000,
+    fluid_init = FluidInitializer(nspecies=nspecies, pressure=300,
         temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid)
-    fluid_init2 = FluidInitializer(nspecies=nspecies, pressure=30000,
+    fluid_init2 = FluidInitializer(nspecies=nspecies, pressure=300,
         temperature=fluid_temperature, mach=Mach_number, species_mass_fraction=y_fluid2)
 
     if restart_file is None:
@@ -916,11 +934,12 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         min_species_0 = np.min(actx.to_numpy(surface_species[0]))
         max_species_0 = np.max(actx.to_numpy(surface_species[0]))
         species_0 = 0.5*(min_species_0 + max_species_0)
-
+        #print(surface_species[0])
+        
         min_species_1 = np.min(actx.to_numpy(surface_species[1]))
         max_species_1 = np.max(actx.to_numpy(surface_species[1]))
         species_1 = 0.5*(min_species_1 + max_species_1)
-
+        #print(surface_species[1])
         surface_cv = project_to_reactive_surface(fluid_state.cv)
         surface_dv = project_to_reactive_surface(fluid_state.dv)
         _, surface_species_rhs = hetero_chem.get_hetero_chem_source_terms(
@@ -929,12 +948,12 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         min_species_0 = np.min(actx.to_numpy(surface_species_rhs[0]))
         max_species_0 = np.max(actx.to_numpy(surface_species_rhs[0]))
         rhs_species_0 = 0.5*(min_species_0 + max_species_0)
-
+        #print(surface_species_rhs[0])
         min_species_1 = np.min(actx.to_numpy(surface_species_rhs[1]))
         max_species_1 = np.max(actx.to_numpy(surface_species_rhs[1]))
         rhs_species_1 = 0.5*(min_species_1 + max_species_1)
-
-        my_file = open("surface_species.dat", "a")
+        #print(surface_species_rhs[1])
+        my_file = open("surface_species_O2model.dat", "a")
         my_file.write(f"{t:.14f}, {species_0}, {species_1}, {rhs_species_0}, {rhs_species_1}\n")
         my_file.close()
 
@@ -972,7 +991,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         write_visfile(dcoll, fluid_viz_fields, fluid_visualizer,
             vizname=vizname+"-fluid", step=step, t=t,
             overwrite=True, comm=comm)
-        """
+       """
 
     def my_write_restart(step, t, state):
         if rank == 0:
@@ -1139,11 +1158,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             grad_cv=fluid_grad_cv, grad_t=fluid_grad_temperature,
             comm_tag=_FluidOperatorTag, inviscid_terms_on=True)
         """
-
+        #print(surf_species[0])
         surface_cv = project_to_reactive_surface(fluid_state.cv)
         surface_dv = project_to_reactive_surface(fluid_state.dv)
         _, surface_species_rhs = hetero_chem.get_hetero_chem_source_terms(
-            surface_nodes, surface_cv, surface_dv, surface_species)
+            surface_nodes, surface_cv, surface_dv, surf_species)
      
         # XXX return make_obj_array([fluid_rhs, fluid_zeros, surface_species_rhs])
         return make_obj_array([fluid_zeros, fluid_zeros, surface_species_rhs])
@@ -1256,7 +1275,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # for writing output
-    casename = "simpleGas_oxidation_test"
+    casename = "surf_species_testO2Model"
     if(args.casename):
         print(f"Custom casename {args.casename}")
         casename = (args.casename).replace("'", "")
