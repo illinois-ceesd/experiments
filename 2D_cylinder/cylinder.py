@@ -28,19 +28,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
-import yaml
 import logging
 import sys
 import numpy as np
 import pyopencl as cl
 from functools import partial
 
-from arraycontext import thaw, freeze
-
-from meshmode.mesh import BTAG_ALL, BTAG_NONE  # noqa
+from arraycontext import thaw
 
 from grudge.eager import EagerDGDiscretization
 from grudge.shortcuts import make_visualizer
+from grudge.shortcuts import compiled_lsrk45_step
 
 from mirgecom.profiling import PyOpenCLProfilingArrayContext
 from mirgecom.navierstokes import ns_operator
@@ -49,30 +47,21 @@ from mirgecom.simutil import (
     get_sim_timestep,
     generate_and_distribute_mesh,
     write_visfile,
-    check_naninf_local,
-    check_range_local,
-    global_reduce,
-    force_evaluation
+    check_naninf_local, check_range_local,
+    global_reduce
 )
-from mirgecom.restart import (
-    write_restart_file
-)
+from mirgecom.utils import force_evaluation
+from mirgecom.restart import write_restart_file
 from mirgecom.io import make_init_message
 from mirgecom.mpi import mpi_entry_point
 import pyopencl.tools as cl_tools
 
-from mirgecom.integrators import (
-    rk4_step,
-    lsrk54_step,
-    euler_step
-)
-from grudge.shortcuts import compiled_lsrk45_step
 from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedFluidBoundary,
     AdiabaticNoslipWallBoundary,
     PressureOutflowBoundary,
-    LinearizedOutflowBoundary
+    # LinearizedOutflowBoundary
 )
 from mirgecom.fluid import make_conserved
 from mirgecom.transport import SimpleTransport
@@ -82,15 +71,12 @@ from mirgecom.viscous import (
 )
 from mirgecom.eos import IdealSingleGas
 from mirgecom.gas_model import GasModel, make_fluid_state
-
-from logpyle import IntervalTimer, set_dt
 from mirgecom.logging_quantities import (
-    initialize_logmgr,
-    logmgr_add_cl_device_info, logmgr_set_time, LogUserQuantity,
+    initialize_logmgr, logmgr_add_cl_device_info, logmgr_set_time,
     logmgr_add_many_discretization_quantities, logmgr_add_device_memory_usage,
-    set_sim_state
 )
 
+from logpyle import IntervalTimer, set_dt
 from pytools.obj_array import make_obj_array
 
 class SingleLevelFilter(logging.Filter):
@@ -216,24 +202,15 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     from mirgecom.simutil import global_reduce as _global_reduce
     global_reduce = partial(_global_reduce, comm=comm)
 
-    logmgr = initialize_logmgr(use_logmgr, filename=(f"{casename}.sqlite"),
-                               mode="wo", mpi_comm=comm)
+    logmgr = initialize_logmgr(True, filename=(f"{casename}.sqlite"),
+                               mode="wu", mpi_comm=comm)
 
-    cl_ctx = ctx_factory()
-
-    if use_profiling:
-        queue = cl.CommandQueue(
-            cl_ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
-    else:
-        queue = cl.CommandQueue(cl_ctx)
-
-    if lazy:
-        actx = actx_class(comm, queue, mpi_base_tag=12000,
-                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
-    else:
-        actx = actx_class(comm, queue,
-                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
-                force_device_scalars=True)
+    from mirgecom.array_context import initialize_actx, actx_class_is_profiling
+    actx = initialize_actx(actx_class, comm,
+                           use_axis_tag_inference_fallback=False,
+                           use_einsum_inference_fallback=True)
+    queue = getattr(actx, "queue", None)
+    use_profiling = actx_class_is_profiling(actx_class)
 
     # ~~~~~~~~~~~~~~~~~~
 
@@ -250,6 +227,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     nrestart = 10000
     nhealth = 1
     nstatus = 100
+    ngarbage = 10
 
     # default timestepping control
     integrator = "compiled_lsrk45"
@@ -258,6 +236,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     constant_cfl = True
     current_cfl = 0.40
     current_dt = 0.0 #dummy if constant_cfl = True
+    local_dt = False
     
     # discretization and model control
     order = 3
@@ -269,25 +248,9 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     current_t = 0
     current_step = 0
 
-    # param sanity check
-    allowed_integrators = ["euler", "rk2", "rk4", \
-                         "ssprk32", "ssprk43", "lsrk54", "compiled_lsrk45"]
-    if(integrator not in allowed_integrators):
-      error_message = "Invalid time integrator: {}".format(integrator)
-      raise RuntimeError(error_message)
-
     def _compiled_stepper_wrapper(state, t, dt, rhs):
         return compiled_lsrk45_step(actx, state, t, dt, rhs)
 
-    force_eval = True
-    if integrator == "euler":
-        timestepper = euler_step
-    if integrator == "rk2":
-        timestepper = rk2_step
-    if integrator == "rk4":
-        timestepper = rk4_step
-    if integrator == "lsrk54":
-        timestepper = lsrk54_step
     if integrator == "compiled_lsrk45":
         timestepper = _compiled_stepper_wrapper
         force_eval = False
@@ -310,32 +273,36 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     eos = IdealSingleGas()
 
-    mu = (340*Mach_number)/Reynolds_number
+    c = np.sqrt(eos.gamma()*100000.0/1.0)
+
+    mu = (c*Mach_number)/Reynolds_number
     kappa = 1000.0*mu/0.71
     transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
     
     gas_model = GasModel(eos=eos, transport=transport_model)
 
-    def get_fluid_state(cv):
+    def _get_fluid_state(cv):
         return make_fluid_state(cv=cv, gas_model=gas_model)
 
-    construct_fluid_state = actx.compile(get_fluid_state)
+    get_fluid_state = actx.compile(_get_fluid_state)
 
 #####################################################################
 
-    def uniform_flow(x_vec, eos, cv=None, **kwargs):
+    def uniform_flow(x_vec, eos):
+
         gamma = eos.gamma()
         R = eos.gas_const()
         
         x = x_vec[0]
-        
-        u_x = 340*0.3 + 0.0*x
-        u_y = 0.0 + 0.0*x
 
         pressure = 100000.0 + 0.0*x
         mass = 1.0 + 0.0*x
+        c = actx.np.sqrt(gamma*pressure/mass)
+        
+        u_x = 0.0*x + c*Mach_number
+        u_y = 0.0*x
 
-        velocity = make_obj_array([u_x,u_y])   
+        velocity = make_obj_array([u_x, u_y])   
         ke = .5*np.dot(velocity, velocity)*mass
 
         rho_e = pressure/(eos.gamma()-1) + ke
@@ -389,25 +356,26 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     from grudge.dof_desc import DISCR_TAG_QUAD
     from mirgecom.discretization import create_discretization_collection
     dcoll = create_discretization_collection(actx, local_mesh, order)
-    nodes = thaw(dcoll.nodes(), actx)
+    nodes = actx.thaw(dcoll.nodes())
 
     if use_overintegration:
         quadrature_tag = DISCR_TAG_QUAD
     else:
         quadrature_tag = None
 
-    from grudge.dof_desc import DD_VOLUME_ALL
-    dd = DD_VOLUME_ALL
+    from grudge.dof_desc import DD_VOLUME_ALL as dd
 
     ##################################################  
 
     if restart_file is None:
         if rank == 0:
             logging.info("Initializing soln.")
-        current_cv = flow_init(x_vec=nodes, eos=eos, time=0.)
+        current_cv = flow_init(x_vec=nodes, eos=eos)
+        first_step = 0
     else:
         current_t = restart_data["t"]
         current_step = restart_step
+        first_step = current_step + 0
 
         if restart_order != order:
             restart_discr = EagerDGDiscretization(
@@ -428,12 +396,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         if logmgr:
             logmgr_set_time(logmgr, current_step, current_t)
 
-    current_state = construct_fluid_state(cv=current_cv)
-    current_state = force_evaluation(actx, current_state)
+    current_cv = force_evaluation(actx, current_cv)
+    current_state = get_fluid_state(cv=current_cv)
 
     ##################################################
 
-    ref_state = construct_fluid_state(cv=flow_init(x_vec=nodes, eos=eos))
+    ref_state = make_fluid_state(cv=flow_init(x_vec=nodes, eos=eos),
+                                 gas_model=gas_model)
 
     # initialize the sponge field
     sponge_x_thickness = 10.0
@@ -457,24 +426,24 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     
     ############################################################################
 
-    inflow_nodes = force_evaluation(actx, dcoll.nodes(dd.trace('inflow')))
-    inflow_state = construct_fluid_state(cv=flow_init(x_vec=inflow_nodes, eos=eos))
-    inflow_state = force_evaluation(actx, inflow_state)
+    inflow_nodes = actx.thaw(dcoll.nodes(dd.trace('inflow')))
+    inflow_cv = force_evaluation(actx, flow_init(x_vec=inflow_nodes, eos=eos))
+    inflow_state = get_fluid_state(cv=inflow_cv)
 
     def _inflow_boundary_state_func(**kwargs):
         return inflow_state
 
-    outflow_nodes = force_evaluation(actx, dcoll.nodes(dd.trace('outflow')))
-    outflow_state = construct_fluid_state(cv=flow_init(x_vec=outflow_nodes, eos=eos))
-    outflow_state = force_evaluation(actx, outflow_state)
+    #outflow_nodes = force_evaluation(actx, dcoll.nodes(dd.trace('outflow')))
+    #outflow_state = get_fluid_state(cv=flow_init(x_vec=outflow_nodes, eos=eos))
+    #outflow_state = force_evaluation(actx, outflow_state)
 
-    def _outflow_boundary_state_func(**kwargs):
-        return outflow_state
+    #def _outflow_boundary_state_func(**kwargs):
+    #    return outflow_state
    
     wall_boundary = AdiabaticNoslipWallBoundary()
     inflow_boundary  = PrescribedFluidBoundary(boundary_state_func=_inflow_boundary_state_func)
-    outflow_boundary = PrescribedFluidBoundary(boundary_state_func=_outflow_boundary_state_func) 
-    #outflow_boundary = PressureOutflowBoundary(boundary_pressure=1.0)
+    #outflow_boundary = PrescribedFluidBoundary(boundary_state_func=_outflow_boundary_state_func) 
+    outflow_boundary = PressureOutflowBoundary(boundary_pressure=100000.0)
 
     boundaries = {dd.trace("inflow").domain_tag: inflow_boundary,
                   dd.trace("outflow").domain_tag: outflow_boundary,
@@ -483,7 +452,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     ##################################################
 
     vis_timer = None
-    log_cfl = LogUserQuantity(name="cfl", value=current_cfl)
 
     logmgr_add_device_memory_usage(logmgr, queue)
     try:
@@ -499,7 +467,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             ("step.max", "step: {value}, "),
             ("dt.max", "dt: {value:1.6e} s, "),
             ("t_sim.max", "sim time: {value:1.6e} s, "),
-            ("t_step.max", "------- step walltime: {value:6g} s\n")])
+            ("t_step.max", "------- step walltime: {value:6g} s")])
 
         if use_profiling:
             logmgr.add_watches(["pyopencl_array_time.max"])
@@ -509,6 +477,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
         gc_timer = IntervalTimer("t_gc", "Time spent garbage collecting")
         logmgr.add_quantity(gc_timer)
+
+#########################################################################
 
     visualizer = make_visualizer(dcoll)
 
@@ -523,18 +493,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                                      constant_cfl=constant_cfl,
                                      initname=initname,
                                      eosname=eosname, casename=casename)
+
     if rank == 0:
         logger.info(init_message)
-        
+
 #########################################################################
-
-    def vol_min_loc(x):
-        from grudge.op import nodal_min_loc
-        return actx.to_numpy(nodal_min_loc(dcoll, "vol", x))[()]
-
-    def vol_max_loc(x):
-        from grudge.op import nodal_max_loc
-        return actx.to_numpy(nodal_max_loc(dcoll, "vol", x))[()]
 
     def vol_min(x):
         from grudge.op import nodal_min
@@ -545,38 +508,21 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         return actx.to_numpy(nodal_max(dcoll, "vol", x))[()]
         
 #########################################################################
-
-    def my_write_status(step, t, dt, dv, state):
-        if constant_cfl:
-            cfl = current_cfl
-        else:
-            from mirgecom.viscous import get_viscous_cfl
-            cfl_field = get_viscous_cfl(dcoll, dt, state=state)
-            from grudge.op import nodal_max
-            cfl = actx.to_numpy(nodal_max(dcoll, "vol", cfl_field))
-        status_msg = f"Step: {step}, T: {t}, DT: {dt}, CFL: {cfl}"
-
-        if rank == 0:
-            logger.info(status_msg)
-            
-        if constant_cfl:
-            return cfl
-        else:
-            return cfl_field
             
     from mirgecom.fluid import velocity_gradient
-    def my_write_viz(step, t, state, ts_field=None,
-                     grad_cv=None, ref_cv=None, sponge_sigma=None):
-        
-        zVort = None
+    def my_write_viz(step, t, dt, state,
+                     grad_cv=None, ref_cv=None, sponge_sigma=None):       
 
         viz_fields = [("CV", state.cv),
                       ("DV_U", state.cv.velocity[0]),
                       ("DV_V", state.cv.velocity[1]),
                       ("DV_P", state.dv.pressure),
                       ("DV_T", state.dv.temperature),
-                      ("dt" if constant_cfl else "cfl", ts_field)
+                      ("dt", dt if local_dt else None)
                       ]
+
+        """
+        zVort = None
 
         if (grad_cv is not None):
             grad_v = velocity_gradient(state.cv,grad_cv)
@@ -592,10 +538,11 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                 ("ref_cv", ref_cv),
                 ("sponge_sigma", sponge_sigma),
             ))
-                              
+        """
+                   
         from mirgecom.simutil import write_visfile
         write_visfile(dcoll, viz_fields, visualizer, vizname=vizname,
-                      step=step, t=t, overwrite=True)                      
+                      step=step, t=t, overwrite=True, comm=comm)
 
     def my_write_restart(step, t, cv):
         rst_fname = snapshot_pattern.format(cname=casename, step=step, rank=rank)
@@ -613,14 +560,14 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     def my_health_check(cv, dv):
         health_error = False
-        pressure = actx.thaw(actx.freeze(dv.pressure))
-        temperature = actx.thaw(actx.freeze(dv.temperature))
+        pressure = force_evaluation(actx, dv.pressure)
+        temperature = force_evaluation(actx, dv.temperature)
         
-        if global_reduce(check_naninf_local(dcoll, "vol", pressure), op="lor"):
+        if check_naninf_local(dcoll, "vol", pressure):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in pressure data.")
 
-        if global_reduce(check_naninf_local(dcoll, "vol", temperature), op="lor"):
+        if check_naninf_local(dcoll, "vol", temperature):
             health_error = True
             logger.info(f"{rank=}: NANs/Infs in temperature data.")
             
@@ -646,20 +593,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         if logmgr:
             logmgr.tick_before()
 
-        try:
+        fluid_state = get_fluid_state(state)
+        fluid_state = force_evaluation(actx, fluid_state)
 
-            fluid_state = construct_fluid_state(state)
-            fluid_state = force_evaluation(actx, fluid_state)
+        try:
          
             dt = get_sim_timestep(dcoll, fluid_state, t, dt, current_cfl,
                                   t_final, constant_cfl)
-#            dt = my_get_timestep_fluid(fluid_state, t, dt)   
 
             do_viz = check_step(step=step, interval=nviz)
             do_restart = check_step(step=step, interval=nrestart)
             do_health = check_step(step=step, interval=nhealth)
-
-            ngarbage = 200
             collect_garbage = check_step(step=step, interval=ngarbage)
 
             if collect_garbage:
@@ -681,27 +625,13 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             if do_restart:
                 my_write_restart(step=step, t=t, cv=cv)
 
-            if do_viz:
-                cv = fluid_state.cv
-                dv = fluid_state.dv
-
-                ns_rhs, grad_cv, grad_t = \
-                    ns_operator(dcoll, state=fluid_state, time=t,
-                                boundaries=boundaries, gas_model=gas_model,
-                                return_gradients=True,
-                                quadrature_tag=quadrature_tag)
-                
-                my_write_viz(step=step, t=t, state=fluid_state, ts_field=None,
-                             #ref_cv=ref_state.cv, sponge_sigma=sponge_sigma,
-                             grad_cv=grad_cv
-                )
+            if do_viz:                
+                my_write_viz(step=step, t=t, dt=dt, state=fluid_state)
 
         except MyRuntimeError:
             if rank == 0:
                 logger.info("Errors detected; attempting graceful exit.")
 
-            fluid_state = construct_fluid_state(state)
-            fluid_state = force_evaluation(actx, fluid_state)
             my_write_viz(step=step, t=t, state=fluid_state)
             raise
 
@@ -712,8 +642,8 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         fluid_state = make_fluid_state(cv=state, gas_model=gas_model)
         
         cv_rhs = ns_operator(dcoll, state=fluid_state, time=t,
-                        boundaries=boundaries, gas_model=gas_model,
-                        return_gradients=False, quadrature_tag=quadrature_tag)
+                             boundaries=boundaries, gas_model=gas_model,
+                             quadrature_tag=quadrature_tag)
 
         sponge = sponge_func(cv=fluid_state.cv, cv_ref=ref_state.cv,
                              sigma=sponge_sigma)
@@ -722,9 +652,21 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 
     def my_post_step(step, t, dt, state):
+
+        if step == first_step + 1:
+            with gc_timer.start_sub_timer():
+                import gc
+                gc.collect()
+                # Freeze the objects that are still alive so they will not
+                # be considered in future gc collections.
+                logger.info("Freezing GC objects to reduce overhead of "
+                            "future GC collections\n")
+                gc.freeze()
+
         if logmgr:        
             set_dt(logmgr, dt)
             logmgr.tick_after()
+
         return state, dt
     
     ##########################################################################
