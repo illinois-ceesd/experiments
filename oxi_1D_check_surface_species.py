@@ -287,13 +287,16 @@ class GasSurfaceReactions:
             surface_sources[1] = + (fluid_species[self.o_index]/mw_o)*k_o*surface_species[0] - surface_species[1]*rate_des
         if self.chem_flag == "new_model_O2":
             surf_site_dens = 1e-5
-            k_ox1 = f_o2/(surf_site_dens*surf_site_dens) * actx.np.exp(-7600.0/wall_temp)
+            k_ox1 = f_o2/(surf_site_dens*surf_site_dens) * actx.np.exp(-600.0/wall_temp)
             k_ox2 = 100.0*f_o2/(surf_site_dens) * actx.np.exp(-4000.0/wall_temp)
             k_ox3 = f_o2/(surf_site_dens) * actx.np.exp(-500.0/wall_temp)
             k_o_des = o_des_pre * actx.np.exp(-44277.0/wall_temp)
             k_o_recomb = o_recomb_pre * 5e-5 * actx.np.exp(-15000.0/wall_temp) 
-            surface_sources[1] = + 2*(fluid_species[self.o2_index]/mw_o2)*k_ox1*surface_species[0]*surface_species[0] - (fluid_species[self.o2_index]/mw_o2)*k_ox2*surface_species[1] - \
-                                        - (fluid_species[self.o2_index]/mw_o2)*k_ox2*surface_species[1] - k_o_des*surface_species[1] - 2*k_o_recomb*surface_species[1]*surface_species[1]
+            #print(k_ox1,k_ox2,k_ox3, k_o_des, k_o_recomb)
+            #print(fluid_species[self.o2_index]/mw_o2)
+            #sys.exit()
+            surface_sources[1] = + 2*(fluid_species[self.o2_index]/mw_o2)*k_ox1*surface_species[0]*surface_species[0] - (fluid_species[self.o2_index]/mw_o2)*k_ox2*surface_species[1] \
+                                        - (fluid_species[self.o2_index]/mw_o2)*k_ox3*surface_species[1] - k_o_des*surface_species[1] - 2*k_o_recomb*surface_species[1]*surface_species[1]
             surface_sources[0] = -1.0 * surface_sources[1]
             
            
@@ -416,7 +419,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
      # default i/o frequencies
     nviz = 100
-    nrestart = 5000
+    nrestart = 500000
     nhealth = 1
     nstatus = 100
 
@@ -424,19 +427,19 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
     # timestepping control
     integrator = "compiled_lsrk45"
-    t_final = 1e-4
+    t_final = 2.01e-6
     speedup_factor = 1.0
 
     local_dt = False
     constant_cfl = False
     current_cfl = 0.2 if use_tpe else 0.4
-    current_dt = 1e-9 #dummy if constant_cfl = True
+    current_dt = 2e-10 #dummy if constant_cfl = True
     
     # discretization and model control
     order = 2
     use_overintegration = False
 
-    fluid_temperature = 700.0
+    fluid_temperature = 1700.0
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -512,7 +515,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         local_mesh = volume_to_local_mesh_data
         local_nelements = local_mesh.nelements
 
-        my_file = open("surface_species.dat", "w")
+        my_file = open("surface_species_O2model.dat", "w")
         my_file.close()
 
     else:  # Restart
