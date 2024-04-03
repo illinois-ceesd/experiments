@@ -52,12 +52,13 @@ from mirgecom.steppers import advance_state
 from mirgecom.boundary import (
     PrescribedFluidBoundary,
     DummyBoundary,
-    AdiabaticSlipBoundary,
+    SymmetryBoundary,
 )
-from mirgecom.initializers import Uniform
+from mirgecom.initializers import PlanarDiscontinuity, Uniform
 from mirgecom.eos import IdealSingleGas
-from mirgecom.gas_model import GasModel, make_fluid_state, make_operator_fluid_states
+from mirgecom.gas_model import GasModel, make_fluid_state
 from logpyle import IntervalTimer, set_dt
+from mirgecom.euler import extract_vars_for_logging, units_for_logging
 
 from mirgecom.fluid import make_conserved
 
@@ -72,58 +73,75 @@ from mirgecom.logging_quantities import (
 logger = logging.getLogger(__name__)
 
 class MyRuntimeError(RuntimeError):
+    """Simple exception to kill the simulation."""
+
     pass
 
-
-class _FluidOpStatesTag:
-    pass
 
 
 @mpi_entry_point
 def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
-         use_profiling=False, casename=None, lazy=False, rst_filename=None):
+         use_leap=False, use_profiling=False, casename=None, lazy=False,
+         rst_filename=None):
+    """Drive the example."""
+    cl_ctx = ctx_factory()
+
+    if casename is None:
+        casename = "mirgecom"
 
     from mpi4py import MPI
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
-    nparts = comm.Get_size()
+    num_parts = comm.Get_size()
 
     from mirgecom.simutil import global_reduce as _global_reduce
     global_reduce = partial(_global_reduce, comm=comm)
 
-    logmgr = initialize_logmgr(True,
+    logmgr = initialize_logmgr(use_logmgr,
         filename=f"{casename}.sqlite", mode="wu", mpi_comm=comm)
 
-    from mirgecom.array_context import initialize_actx, actx_class_is_profiling
-    actx = initialize_actx(actx_class, comm,
-                           use_axis_tag_inference_fallback=False,
-                           use_einsum_inference_fallback=True)
-    queue = getattr(actx, "queue", None)
-    use_profiling = actx_class_is_profiling(actx_class)
+    if use_profiling:
+        queue = cl.CommandQueue(
+            cl_ctx, properties=cl.command_queue_properties.PROFILING_ENABLE)
+    else:
+        queue = cl.CommandQueue(cl_ctx)
 
-    # ~~~~~~~~~~~~~~~~~~
+    if lazy:
+        actx = actx_class(comm, queue, mpi_base_tag=12000,
+                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)))
+    else:
+        actx = actx_class(comm, queue,
+                allocator=cl_tools.MemoryPool(cl_tools.ImmediateAllocator(queue)),
+                force_device_scalars=True)
 
-    mesh_filename = "mesh_v3-v2.msh"
+    mesh_filename = "mesh_v2-v2.msh"
 
     # timestepping control
     current_step = 0
     t_final = 60.0
     current_cfl = 0.2
-    current_dt = 1e-2
+    current_dt = 1e-5
     current_t = 0
     integrator = "compiled_lsrk45"
 
     order = 2
 
+    use_AV = True
+    use_overintegration = False
+    local_dt = True
     constant_cfl = True
 
     # some i/o frequencies
-    nviz = 1000
-    nrestart = 10000
+    nrestart = 1000
     nstatus = 1
+    nviz = 100
     nhealth = 1
 
-    niter = 200001
+    niter = 134001
+
+    dim = 2
+    if dim != 2:
+        raise ValueError("This example must be run with dim = 2.")
 
     from grudge.shortcuts import compiled_lsrk45_step
     def _compiled_stepper_wrapper(state, t, dt, rhs):
@@ -135,10 +153,6 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         force_eval = False
 
 ###################################################
-
-    dim = 2
-    if dim != 2:
-        raise ValueError("This example must be run with dim = 2.")
 
     rst_path = "restart_data/"
     viz_path = "viz_data/"
@@ -176,13 +190,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         global_nelements = restart_data["global_nelements"]
         restart_order = int(restart_data["order"])
 
-        assert comm.Get_size() == restart_data["nparts"]
+        assert comm.Get_size() == restart_data["num_parts"]
 
+    from grudge.dof_desc import DISCR_TAG_QUAD
     from mirgecom.discretization import create_discretization_collection
     dcoll = create_discretization_collection(actx, local_mesh, order=order)
 
-    from grudge.dof_desc import DISCR_TAG_BASE
-    quadrature_tag = DISCR_TAG_BASE
+    from grudge.dof_desc import DISCR_TAG_BASE, DISCR_TAG_QUAD
+    if use_overintegration:
+        quadrature_tag = DISCR_TAG_QUAD
+    else:
+        quadrature_tag = DISCR_TAG_BASE
 
     if rank == 0:
         logger.info("Done making discretization")
@@ -191,11 +209,26 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 ##############################################################################
 
+    if use_AV:
+        s0 = np.log10(1.0e-4 / np.power(order, 4))
+        alpha = 1.0e-3
+        kappa_av = 0.5
+        av_species = 0.0
+    else:
+        s0 = np.log10(1.0e-4 / np.power(order, 4))
+        alpha = 0.0
+        kappa_av = 0.5
+        av_species = 0.0
+
+##############################################################################
+
     vis_timer = None
 
     if logmgr:
         logmgr_add_cl_device_info(logmgr, queue)
         logmgr_add_device_memory_usage(logmgr, queue)
+        logmgr_add_many_discretization_quantities(logmgr, dcoll, dim,
+                             extract_vars_for_logging, units_for_logging)
 
         vis_timer = IntervalTimer("t_vis", "Time spent visualizing")
         logmgr.add_quantity(vis_timer)
@@ -207,6 +240,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             ("t_step.max", "------- step walltime: {value:6g} s\n")
             ])
 
+        #logmgr_add_device_memory_usage(logmgr, queue)
         try:
             logmgr.add_watches(["memory_usage_python.max", "memory_usage_gpu.max"])
         except KeyError:
@@ -218,17 +252,60 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     # soln setup and init
     eos = IdealSingleGas(gamma=1.4, gas_const=1.0)
 
-    from mirgecom.transport import SimpleTransport
+    from mirgecom.transport import SimpleTransport, ArtificialViscosityTransport
     kappa = 0.0
     mu = 0.0
-    transport_model = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
+    physical_transport = SimpleTransport(viscosity=mu, thermal_conductivity=kappa)
 
-    gas_model = GasModel(eos=eos, transport=transport_model)
+    if use_AV:
+        s0 = np.log10(1.0e-4 / np.power(order, 4))
+        alpha = 1.0e-3
+        kappa_av = 0.5
+
+        transport_model = ArtificialViscosityTransport(
+            physical_transport=physical_transport, av_mu=alpha, av_prandtl=0.71
+        )
+
+        gas_model = GasModel(eos=eos, transport=transport_model)
+    else:
+        gas_model = GasModel(eos=eos, transport=physical_transport)
 
 ###############################
 
-    def _get_fluid_state(cv):
-        return make_fluid_state(cv=cv, gas_model=gas_model)
+    from mirgecom.limiter import bound_preserving_limiter
+    def _limit_fluid_cv(cv, pressure=None, temperature=None, tseed=None, dd=None):
+
+#        # recompute density
+#        pressure =  bound_preserving_limiter(dcoll, pressure, mmin=1e-7, mmax=3.0, modify_average=True, dd=dd)
+#        temperature =  bound_preserving_limiter(dcoll, temperature, mmin=1e-7, mmax=3.0, modify_average=True, dd=dd)
+#        mass_lim =  bound_preserving_limiter(dcoll,
+#            eos.get_density(pressure=pressure, temperature=temperature), 
+#            mmin=1e-7, mmax=3.0, modify_average=True, dd=dd)
+
+        mass_lim =  bound_preserving_limiter(dcoll, cv.mass, mmin=1e-5, mmax=3.0, modify_average=True, dd=dd)
+        temperature = gas_model.eos.temperature(cv, temperature_seed=tseed)
+        temperature = bound_preserving_limiter(dcoll, temperature, mmin=1e-5, mmax=3.0, modify_average=True, dd=dd)
+#        pressure = gas_model.eos.pressure(cv, temperature=temperature)
+        pressure = mass_lim*eos.gas_const(cv)*temperature
+
+        # If the mass was negative and then it becomes positive,
+        # it will make the velocity flip signal if we use the updated mass
+#        velocity = cv.momentum/actx.np.abs(cv.mass)
+        velocity = cv.momentum*0.0
+        velocity[0] = actx.np.where(actx.np.less(cv.mass, 0.0), 0.0, cv.momentum[0]/cv.mass)
+        velocity[1] = actx.np.where(actx.np.less(cv.mass, 0.0), 0.0, cv.momentum[1]/cv.mass)
+        energy_lim = pressure/(eos.gamma()-1.0) + 0.5*mass_lim*np.dot(velocity, velocity)
+
+        # make a new CV with the limited variables
+        return make_conserved(dim=dim, mass=mass_lim, energy=energy_lim,
+                              momentum=mass_lim*velocity
+        ), temperature, pressure
+
+
+    from mirgecom.artificial_viscosity import smoothness_indicator
+    def _get_fluid_state(cv, smoothness):
+        return make_fluid_state(cv=cv, gas_model=gas_model, smoothness=smoothness,
+                                limiter_func=_limit_fluid_cv)
     get_fluid_state = actx.compile(_get_fluid_state)
 
 ###############################
@@ -236,7 +313,7 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     vel = np.zeros(shape=(dim,))
     orig = np.zeros(shape=(dim,))
     vel[0] = 3.0*np.sqrt(1.4*1.0*0.5)
-    init_flow = Uniform(rho=0.1, pressure=0.1*1.0*0.5, velocity=vel)
+    init_flow = Uniform(rho=0.1, p=0.1*1.0*0.5, velocity=vel, mass_fracs=None)
 
     if restart_file is None:
         if rank == 0:
@@ -262,15 +339,17 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                 restart_discr.discr_from_dd("vol"))
 
             current_cv = connection(restart_data["cv"])
+#            tseed = connection(restart_data["temperature_seed"])
         else:
             current_cv = restart_data["cv"]
+#            tseed = restart_data["temperature_seed"]
 
         if logmgr:
             logmgr_set_time(logmgr, current_step, current_t)
 
     current_cv = force_evaluation(actx, current_cv)
 
-    current_state = get_fluid_state(current_cv)
+    current_state = get_fluid_state(current_cv, smoothness=nodes[0]*0.0)
 
 #####################################################################################
 
@@ -283,11 +362,14 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         inflow_bnd_discr = dcoll.discr_from_dd(dd_bdry)
         inflow_nodes = actx.thaw(inflow_bnd_discr.nodes())
         inflow_cv_cond = init_flow(x_vec=inflow_nodes, eos=eos)
-        return make_fluid_state(cv=inflow_cv_cond, gas_model=gas_model)
+        return make_fluid_state(cv=inflow_cv_cond, gas_model=gas_model,
+            smoothness=inflow_nodes[0]*0.0,
+            limiter_func=_limit_fluid_cv, limiter_dd=dd_bdry
+        )
 
     inflow_bnd = PrescribedFluidBoundary(boundary_state_func=inlet_bnd_state_func)
     outflow_bnd = DummyBoundary()
-    wall_bnd = AdiabaticSlipBoundary()
+    wall_bnd = SymmetryBoundary()
 
     from grudge.dof_desc import DTAG_BOUNDARY
     boundaries = {DTAG_BOUNDARY("inlet"): inflow_bnd,
@@ -296,7 +378,10 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
 
 #############################################################################
 
-    current_state = make_fluid_state(current_cv, gas_model)
+    smoothness = smoothness_indicator(dcoll, current_cv.mass,
+                                      kappa=kappa_av, s0=s0)
+    current_state = make_fluid_state(current_cv, gas_model, smoothness,
+            limiter_func=_limit_fluid_cv)
 
     visualizer = make_visualizer(dcoll)
 
@@ -312,15 +397,23 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     if rank == 0:
         logger.info(init_message)
 
-    def my_write_viz(step, t, state):
+    def my_write_viz(step, t, state, source=None, smoothness=None,
+                     rhs=None, grad_cv=None, grad_t=None):
                      
         viz_fields = [("CV", state.cv),
                       ("DV_U", state.cv.velocity),
                       ("DV_P", state.pressure),
                       ("DV_T", state.temperature),
-                      # ("TV_mu", state.tv.viscosity),
-                      # ("TV_kappa", state.tv.thermal_conductivity),
+                      ("TV_mu", state.tv.viscosity),
+                      ("TV_kappa", state.tv.thermal_conductivity),
+                      ("smoothness", smoothness)
                       ]
+
+#        viz_ext = [
+#                   ("rhs", rhs),
+#                   ("source", source)
+#                  ]
+#        viz_fields.extend(viz_ext)
                       
         from mirgecom.simutil import write_visfile
         write_visfile(dcoll, viz_fields, visualizer, vizname=vizname,
@@ -336,36 +429,63 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
                 "step": step,
                 "order": order,
                 "global_nelements": global_nelements,
-                "nparts": nparts
+                "num_parts": num_parts
             }
             from mirgecom.restart import write_restart_file
             write_restart_file(actx, rst_data, rst_fname, comm)
 
     def my_health_check(pressure):
         health_error = False
+        from mirgecom.simutil import check_naninf_local, check_range_local
         if check_naninf_local(dcoll, "vol", pressure):
             health_error = True
             logger.info(f"{rank=}: Invalid pressure data found.")
 
         return health_error
 
+#    from pytools.obj_array import make_obj_array
+#    from mirgecom.drop_order import drop_order
+#    def _drop_order_cv(cv, flipped_smoothness, theta_factor, dd=None):
+
+#        smoothness = 1.0 - theta_factor*flipped_smoothness
+
+#        density_lim = drop_order(dcoll, cv.mass, smoothness, positivity_preserving=True)
+#        momentum_lim = make_obj_array([
+#            drop_order(dcoll, cv.momentum[0], smoothness),
+#            drop_order(dcoll, cv.momentum[1], smoothness)])
+#        energy_lim = drop_order(dcoll, cv.energy, smoothness, positivity_preserving=True)
+
+#        # make a new CV with the limited variables
+#        return make_conserved(dim=dim, mass=density_lim, energy=energy_lim,
+#            momentum=momentum_lim)
+
 #########################################################################
 
     def my_pre_step(step, t, dt, state):
-        if logmgr:
-            logmgr.tick_before()
+        logmgr.tick_before()
 
-        cv = force_evaluation(actx, state)
+        cv = state
+
+        smoothness = smoothness_indicator(dcoll, cv.mass,
+                                          kappa=kappa_av, s0=s0)
     
-        fluid_state = get_fluid_state(cv=cv)
+#        cv = _drop_order_cv(cv, smoothness, 0.01)
+
+        fluid_state = get_fluid_state(cv=cv, smoothness=smoothness)
         fluid_state = force_evaluation(actx, fluid_state)
 
         cv = fluid_state.cv
         dv = fluid_state.dv
 
-        if constant_cfl:
+        if local_dt:
+            t = force_evaluation(actx, t)
             dt = get_sim_timestep(dcoll, fluid_state, t, dt, current_cfl,
-                                  t_final, constant_cfl)
+                 gas_model, constant_cfl=constant_cfl, local_dt=local_dt)
+            dt = force_evaluation(actx, actx.np.minimum(dt, current_dt))
+        else:
+            if constant_cfl:
+                dt = get_sim_timestep(dcoll, fluid_state, t, dt, current_cfl,
+                                      t_final, constant_cfl, local_dt)
 
         try:
             do_viz = check_step(step=step, interval=nviz)
@@ -383,8 +503,22 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
             if do_restart:
                 my_write_restart(step=step, t=t, state=cv)
 
-            if do_viz:               
-                my_write_viz(step=step, t=t, state=fluid_state)
+            if do_viz:
+                ns_rhs = None
+                source = None
+                grad_cv = None
+                grad_t = None
+#                ns_rhs, grad_cv, grad_t = \
+#                    ns_operator(discr, state=fluid_state, time=t,
+#                                boundaries=boundaries, gas_model=gas_model,
+#                                return_gradients=True,
+#                                quadrature_tag=quadrature_tag)
+#                
+#                ns_rhs = ns_rhs + source
+                
+                my_write_viz(step=step, t=t, state=fluid_state,
+                             rhs=ns_rhs, source=source, smoothness=smoothness,
+                             grad_cv=grad_cv, grad_t=grad_t)
 
         except MyRuntimeError:
             if rank == 0:
@@ -396,33 +530,47 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
         return cv, dt
 
     def my_rhs(t, state):
+
+        #cv = _drop_order_cv(state, smoothness, 0.01)
         cv = state
 
-        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model)
+        smoothness = smoothness_indicator(dcoll, cv.mass,
+                                          kappa=kappa_av, s0=s0)
 
-        operator_states_quad = make_operator_fluid_states(
-            dcoll, fluid_state, gas_model, boundaries, quadrature_tag,
-            comm_tag=_FluidOpStatesTag)
+        fluid_state = make_fluid_state(cv=cv, gas_model=gas_model,
+            limiter_func=_limit_fluid_cv, smoothness=smoothness)
      
-        return ns_operator(dcoll, gas_model, fluid_state, boundaries,
-            time=t, operator_states_quad=operator_states_quad,
+        return ns_operator(dcoll, state=fluid_state, time=t,
+            boundaries=boundaries, gas_model=gas_model,
             quadrature_tag=quadrature_tag)
 
     def my_post_step(step, t, dt, state):
+        min_dt = np.min(actx.to_numpy(dt))
         if logmgr:
-            set_dt(logmgr, dt)
+            set_dt(logmgr, min_dt)
             logmgr.tick_after()
         return state, dt
 
 #################################################################
 
-    dt = 1.0*current_dt
-    t = 1.0*current_t
+    if local_dt == True:
+        dt = (#force_evaluation(actx, 
+             get_sim_timestep(dcoll, current_state, current_t,
+                     current_dt, current_cfl, gas_model,
+                     constant_cfl=constant_cfl, local_dt=local_dt)
+        )
+        dt = force_evaluation(actx, actx.np.minimum(current_dt, dt))
+
+        t = force_evaluation(actx, current_t + zeros)
+    else:
+        dt = 1.0*current_dt
+        t = 1.0*current_t
 
     current_step, current_t, current_cv = \
         advance_state(rhs=my_rhs, timestepper=timestepper,
                       pre_step_callback=my_pre_step,
                       post_step_callback=my_post_step, dt=dt,
+                      max_steps=niter, local_dt=local_dt,
                       state=current_state.cv, t=current_t, t_final=t_final,
                       istep=current_step)
 
@@ -443,34 +591,41 @@ def main(actx_class, ctx_factory=cl.create_some_context, use_logmgr=True,
     elif use_profiling:
         print(actx.tabulate_profiling_data())
 
+    finish_tol = 1e-16
+    assert np.abs(current_t - t_final) < finish_tol
+
 
 if __name__ == "__main__":
-    logging.basicConfig(format="%(message)s", level=logging.INFO)
-    casename = "step"
-
     import argparse
+    casename = "step"
     parser = argparse.ArgumentParser(description=f"MIRGE-Com Example: {casename}")
-
     parser.add_argument("--lazy", action="store_true",
         help="switch to a lazy computation mode")
+    parser.add_argument("--profiling", action="store_true",
+        help="turn on detailed performance profiling")
     parser.add_argument("--log", action="store_true", default=True,
         help="turn on logging")
+    parser.add_argument("--leap", action="store_true",
+        help="use leap timestepper")
     parser.add_argument("--restart_file", help="root name of restart file")
     parser.add_argument("--casename", help="casename to use for i/o")
     args = parser.parse_args()
     lazy = args.lazy
+    if args.profiling:
+        if lazy:
+            raise ValueError("Can't use lazy and profiling together.")
 
     from grudge.array_context import get_reasonable_array_context_class
     actx_class = get_reasonable_array_context_class(lazy=lazy, distributed=True)
 
+    logging.basicConfig(format="%(message)s", level=logging.INFO)
     if args.casename:
         casename = args.casename
-
     rst_filename = None
     if args.restart_file:
         rst_filename = args.restart_file
 
-    main(actx_class, use_logmgr=args.log, lazy=lazy,
-         casename=casename, rst_filename=rst_filename)
+    main(actx_class, use_logmgr=args.log, use_leap=args.leap, lazy=lazy,
+         use_profiling=args.profiling, casename=casename, rst_filename=rst_filename)
 
 # vim: foldmethod=marker
